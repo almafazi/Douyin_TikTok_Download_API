@@ -1,5 +1,6 @@
 const express = require('express');
 const app = express();
+const cors = require('cors'); // Import the cors middleware
 const { encrypt, decrypt } = require('./crypto'); // Assuming you have encrypt/decrypt functions in a crypto.js file
 
 const BASE_URL = process.env.BASE_URL;
