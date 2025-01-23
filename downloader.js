@@ -29,7 +29,7 @@ app.post('/tiktok', async (req, res) => {
         const data = await response.json();
 
         // Parse the response into the HTML template
-        const htmlContent = generateHtml(data);
+        const htmlContent = generateHtml(data, url);
 
         // Respond with the HTML content
         res.json({ html: htmlContent });
@@ -98,7 +98,7 @@ app.get('/download', async (req, res) => {
 });
 
 // Function to generate HTML from the JSON response
-function generateHtml(data) {
+function generateHtml(data, url = '') {
     const videoData = data.data;
     const author = videoData.author;
     const statistics = videoData.statistics;
@@ -161,12 +161,7 @@ function generateHtml(data) {
                 <div class="col-12 col-md-4 offset-md-2">
                     <div class="down-right">
                         <!-- Download Buttons -->
-                        ${encryptedNoWatermarkUrls.map((url, index) => `
-                            <a href="/download?data=${url}" class="btn btn-main active mb-2" rel="nofollow">Download Image ${index + 1} (No Watermark)</a>
-                        `).join('')}
-                        ${encryptedWatermarkUrls.map((url, index) => `
-                            <a href="/download?data=${url}" class="btn btn-main active mb-2" rel="nofollow">Download Image ${index + 1} (With Watermark)</a>
-                        `).join('')}
+                        <a href="https://tiktok.y2mate.one/?url=${url}" class="btn btn-main active mb-2" rel="nofollow">Download Video</a>
                         <!-- Download Another Button -->
                         <a href="/" class="btn btn-main btn-back">
                             <svg width="20" height="21" fill="none" xmlns="http://www.w3.org/2000/svg">
