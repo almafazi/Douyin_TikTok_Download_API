@@ -145,7 +145,7 @@ function generateHtml(data, url = '') {
                         <!-- User Info -->
                         <div class="user-info">
                             <div class="user-fullname">${author.nickname}</div>
-                            <div class="user-username">@${videoData.desc}</div>
+                            <div class="user-username">${videoData.desc}</div>
                             <div class="user-username">
                                 <i class="ph ph-repeat"></i><span class="me-2">${statistics.repost_count}</span>
                                 <i class="ph ph-chat-circle-dots"></i><span class="me-2">${statistics.comment_count}</span>
@@ -251,12 +251,12 @@ function generateHtml(data, url = '') {
                     <div class="down-left">
                         <!-- User Avatar -->
                         <div class="user-avatar">
-                            <img src="${author.avatar_thumb.url_list[0]}" alt="thumbnail" id="thumbnail">
+                            <img src="${videoData.cover_data?.cover?.url_list[0]}" alt="thumbnail" id="thumbnail">
                         </div>
                         <!-- User Info -->
                         <div class="user-info">
                             <div class="user-fullname">${author.nickname}</div>
-                            <div class="user-username">@${author.unique_id}</div>
+                            <div class="user-username">${videoData.desc}</div>
                             <div class="user-username">
                                 <i class="ph ph-repeat"></i><span class="me-2">${statistics.repost_count}</span>
                                 <i class="ph ph-chat-circle-dots"></i><span class="me-2">${statistics.comment_count}</span>
