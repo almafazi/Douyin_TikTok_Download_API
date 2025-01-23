@@ -4,6 +4,8 @@ const { encrypt, decrypt } = require('./crypto'); // Assuming you have encrypt/d
 
 const BASE_URL = process.env.BASE_URL;
 // Middleware to parse JSON bodies
+app.use(cors());
+
 app.use(express.json());
 
 // POST endpoint at /tiktok
