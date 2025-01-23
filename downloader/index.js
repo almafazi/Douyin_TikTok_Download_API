@@ -32,11 +32,12 @@ app.post('/tiktok', async (req, res) => {
 
         const data = await response.json();
 
+        res.json(data);
         // Parse the response into the HTML template
-        const htmlContent = generateHtml(data, url);
+        // const htmlContent = generateHtml(data, url);
 
-        // Respond with the HTML content
-        res.json({ html: htmlContent });
+        // // Respond with the HTML content
+        // res.json({ html: htmlContent });
     } catch (error) {
         console.error('Error fetching data:', error);
         res.status(500).json({ error: 'Failed to fetch data from the external API' });
@@ -139,12 +140,12 @@ function generateHtml(data, url = '') {
                     <div class="down-left">
                         <!-- User Avatar -->
                         <div class="user-avatar">
-                            <img src="${author.avatar_thumb.url_list[0]}" alt="thumbnail" id="thumbnail">
+                            <img src="${videoData.cover_data?.cover?.url_list[0]}" alt="thumbnail" id="thumbnail">
                         </div>
                         <!-- User Info -->
                         <div class="user-info">
                             <div class="user-fullname">${author.nickname}</div>
-                            <div class="user-username">@${author.unique_id}</div>
+                            <div class="user-username">@${videoData.desc}</div>
                             <div class="user-username">
                                 <i class="ph ph-repeat"></i><span class="me-2">${statistics.repost_count}</span>
                                 <i class="ph ph-chat-circle-dots"></i><span class="me-2">${statistics.comment_count}</span>
@@ -172,7 +173,7 @@ function generateHtml(data, url = '') {
                 <div class="col-12 col-md-4 offset-md-2">
                     <div class="down-right">
                         <!-- Download Buttons -->
-                        <a href="https://tiktok.y2mate.one/?url=${url}" class="btn btn-main active mb-2" rel="nofollow">Download Video</a>
+                        <a target="_blank" href="https://tiktok.y2mate.one/?url=${url}" class="btn btn-main active mb-2" rel="nofollow">Download Video</a>
                         <a href="${BASE_URL}/download?data=${encryptedMp3Url}" class="btn btn-main active mb-2" rel="nofollow">MP3 Download</a>
                         <!-- Download Another Button -->
                         <a href="/" class="btn btn-main btn-back">
