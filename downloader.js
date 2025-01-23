@@ -2,6 +2,7 @@ const express = require('express');
 const app = express();
 const { encrypt, decrypt } = require('./crypto'); // Assuming you have encrypt/decrypt functions in a crypto.js file
 
+const BASE_URL = process.env.BASE_URL;
 // Middleware to parse JSON bodies
 app.use(express.json());
 
@@ -103,6 +104,7 @@ function generateHtml(data, url = '') {
     const author = videoData.author;
     const statistics = videoData.statistics;
 
+    const musicUrl = videoData.music.play_url.uri;
     // Check if the data type is image
     const isImage = videoData.type === 'image';
 
@@ -119,6 +121,12 @@ function generateHtml(data, url = '') {
         const encryptedWatermarkUrls = imageUrls.watermark_image_list.map(url =>
             encrypt(JSON.stringify({ url, author: author.nickname, type: 'image' }), 'overflow', 360)
         );
+
+        const encryptedMp3Url = encrypt(JSON.stringify({
+            url: musicUrl,
+            author: author.nickname,
+            type: 'mp3'
+        }), 'overflow', 360);
 
         html = `
         <div class="container" data-id="Image">
@@ -162,6 +170,7 @@ function generateHtml(data, url = '') {
                     <div class="down-right">
                         <!-- Download Buttons -->
                         <a href="https://tiktok.y2mate.one/?url=${url}" class="btn btn-main active mb-2" rel="nofollow">Download Video</a>
+                        <a href="${BASE_URL}/download?data=${encryptedMp3Url}" class="btn btn-main active mb-2" rel="nofollow">MP3 Download</a>
                         <!-- Download Another Button -->
                         <a href="/" class="btn btn-main btn-back">
                             <svg width="20" height="21" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -174,7 +183,7 @@ function generateHtml(data, url = '') {
                                     </clipPath>
                                 </defs>
                             </svg>
-                            Download other image
+                            Download other
                         </a>
                     </div>
                 </div>
@@ -186,7 +195,7 @@ function generateHtml(data, url = '') {
                         <div>
                             <img alt="" src="${url}">
                             <div>
-                                <a class="btn btn-main" href="/download?data=${encryptedNoWatermarkUrls[index]}">Download Image ${index + 1}</a>
+                                <a class="btn btn-main" href="${BASE_URL}/download?data=${encryptedNoWatermarkUrls[index]}">Download Image ${index + 1}</a>
                             </div>
                         </div>
                     </div>
@@ -271,12 +280,12 @@ function generateHtml(data, url = '') {
                 <div class="col-12 col-md-4 offset-md-2">
                     <div class="down-right">
                         <!-- Download Buttons -->
-                        <a href="/download?data=${encryptedWmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download</a>
-                        <a href="/download?data=${encryptedWmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download HD</a>
-                        <a href="/download?data=${encryptedNwmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark</a>
-                        <a href="/download?data=${encryptedNwmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark HD</a>
+                        <a href="${BASE_URL}/download?data=${encryptedWmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download</a>
+                        <a href="${BASE_URL}/download?data=${encryptedWmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download HD</a>
+                        <a href="${BASE_URL}/download?data=${encryptedNwmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark</a>
+                        <a href="${BASE_URL}/download?data=${encryptedNwmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark HD</a>
                         <!-- MP3 Download Button -->
-                        <a href="/download?data=${encryptedMp3Url}" class="btn btn-main active mb-2" rel="nofollow">MP3 Download</a>
+                        <a href="${BASE_URL}/download?data=${encryptedMp3Url}" class="btn btn-main active mb-2" rel="nofollow">MP3 Download</a>
                         <!-- Download Another Button -->
                         <a href="/" class="btn btn-main btn-back">
                             <svg width="20" height="21" fill="none" xmlns="http://www.w3.org/2000/svg">
