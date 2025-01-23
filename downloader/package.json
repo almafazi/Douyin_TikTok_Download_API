@@ -1,14 +1,12 @@
 {
-  "name": "tiktok-downloader",
-  "module": "downloader.js",
+  "name": "downloader",
+  "module": "index.js",
   "type": "module",
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
-  },
-  "dependencies": {
+    "typescript": "^5.0.0",
     "crypto-js": "^4.2.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2"
