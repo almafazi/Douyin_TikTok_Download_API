@@ -32,12 +32,12 @@ app.post('/tiktok', async (req, res) => {
 
         const data = await response.json();
 
-        res.json(data);
+        // res.json(data);
         // Parse the response into the HTML template
-        // const htmlContent = generateHtml(data, url);
+        const htmlContent = generateHtml(data, url);
 
-        // // Respond with the HTML content
-        // res.json({ html: htmlContent });
+        // Respond with the HTML content
+        res.json({ html: htmlContent });
     } catch (error) {
         console.error('Error fetching data:', error);
         res.status(500).json({ error: 'Failed to fetch data from the external API' });
