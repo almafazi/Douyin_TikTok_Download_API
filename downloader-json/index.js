@@ -9,7 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 
-ffmpeg.setFfmpegPath(ffmpegStatic);
+//ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const BASE_URL = process.env.BASE_URL;
 // Middleware to parse JSON bodies
