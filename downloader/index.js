@@ -83,12 +83,16 @@ app.get('/download', async (req, res) => {
             throw new Error('Invalid file type specified');
         }
 
-        // Set headers for file download with the author's name in the filename
         const filename = `${author}.${fileExtension}`;
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Type', contentType);
+        const encodedFilename = encodeURIComponent(filename);
 
-        // Stream the file directly to the client
+        // Set headers
+        res.set({
+            'Content-Disposition': `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`,
+            'Content-Type': contentType
+        });
+
+        // Stream the response
         const reader = fileResponse.body.getReader();
         while (true) {
             const { done, value } = await reader.read();
