@@ -217,35 +217,35 @@ function generateHtml(data, url = '') {
         const musicUrl = videoData.music.play_url.uri;
 
         // Encrypt the download data
-        const encryptedWmUrl = encrypt(JSON.stringify({
+        const encryptedWmUrl = videoUrls.wm_video_url ? encrypt(JSON.stringify({
             url: videoUrls.wm_video_url,
             author: author.nickname,
             type: 'video'
-        }), 'overflow', 360);
+        }), 'overflow', 360) : null;
 
-        const encryptedWmHqUrl = encrypt(JSON.stringify({
+        const encryptedWmHqUrl = videoUrls.wm_video_url_HQ ? encrypt(JSON.stringify({
             url: videoUrls.wm_video_url_HQ,
             author: author.nickname,
             type: 'video'
-        }), 'overflow', 360);
+        }), 'overflow', 360) : null;
 
-        const encryptedNwmUrl = encrypt(JSON.stringify({
+        const encryptedNwmUrl = videoUrls.nwm_video_url ? encrypt(JSON.stringify({
             url: videoUrls.nwm_video_url,
             author: author.nickname,
             type: 'video'
-        }), 'overflow', 360);
+        }), 'overflow', 360) : null;
 
-        const encryptedNwmHqUrl = encrypt(JSON.stringify({
+        const encryptedNwmHqUrl = videoUrls.nwm_video_url_HQ ? encrypt(JSON.stringify({
             url: videoUrls.nwm_video_url_HQ,
             author: author.nickname,
             type: 'video'
-        }), 'overflow', 360);
+        }), 'overflow', 360) : null;
 
-        const encryptedMp3Url = encrypt(JSON.stringify({
+        const encryptedMp3Url = musicUrl ? encrypt(JSON.stringify({
             url: musicUrl,
             author: author.nickname,
             type: 'mp3'
-        }), 'overflow', 360);
+        }), 'overflow', 360) : null;
 
         html = `
         <div class="container" data-id="Video">
@@ -288,12 +288,11 @@ function generateHtml(data, url = '') {
                 <div class="col-12 col-md-4 offset-md-2">
                     <div class="down-right">
                         <!-- Download Buttons -->
-                        <a href="${BASE_URL}/download?data=${encryptedWmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download</a>
-                        <a href="${BASE_URL}/download?data=${encryptedWmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download HD</a>
-                        <a href="${BASE_URL}/download?data=${encryptedNwmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark</a>
-                        <a href="${BASE_URL}/download?data=${encryptedNwmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark HD</a>
-                        <!-- MP3 Download Button -->
-                        <a href="${BASE_URL}/download?data=${encryptedMp3Url}" class="btn btn-main active mb-2" rel="nofollow">MP3 Download</a>
+                        ${encryptedWmUrl ? `<a href="${BASE_URL}/download?data=${encryptedWmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download</a>` : ''}
+                        ${encryptedWmHqUrl ? `<a href="${BASE_URL}/download?data=${encryptedWmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download HD</a>` : ''}
+                        ${encryptedNwmUrl ? `<a href="${BASE_URL}/download?data=${encryptedNwmUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark</a>` : ''}
+                        ${encryptedNwmHqUrl ? `<a href="${BASE_URL}/download?data=${encryptedNwmHqUrl}" class="btn btn-main active mb-2" rel="nofollow">Download No Watermark HD</a>` : ''}
+                        ${encryptedMp3Url ? `<a href="${BASE_URL}/download?data=${encryptedMp3Url}" class="btn btn-main active mb-2" rel="nofollow">MP3 Download</a>` : ''}
                         <!-- Download Another Button -->
                         <a href="/" class="btn btn-main btn-back">
                             <svg width="20" height="21" fill="none" xmlns="http://www.w3.org/2000/svg">
