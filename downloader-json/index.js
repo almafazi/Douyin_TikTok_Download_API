@@ -8,18 +8,36 @@ const ffmpegStatic = require("ffmpeg-static");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
+const bodyParser = require('body-parser');
 
-//ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const BASE_URL = process.env.BASE_URL;
 // Middleware to parse JSON bodies
-app.use(cors());
+app.use(
+    cors({
+      origin: '*', // Allow all origins (or specify specific origins)
+      exposedHeaders: ['content-disposition', 'x-filename'], // Expose these headers
+    })
+);
+app.use(express.json({
+    limit: '10mb',
+    strict: true,
+    verify: (req, res, buf, encoding) => {
+      try {
+        JSON.parse(buf.toString());
+      } catch (e) {
+        console.error('Invalid JSON:', buf.toString());
+        throw new Error('Invalid JSON');
+      }
+    }
+}));
 
-app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
 // POST endpoint at /tiktok
 app.post('/tiktok', async (req, res) => {
-    const url = req.body.url;
+    const { url } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
@@ -93,8 +111,14 @@ app.get('/download', async (req, res) => {
 
         // Set headers for file download with the author's name in the filename
         const filename = `${author}.${fileExtension}`;
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Type', contentType);
+        const encodedFilename = encodeURIComponent(filename);
+
+        // Set headers
+        res.set({
+            'x-filename': encodedFilename,
+            'Content-Disposition': `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`,
+            'Content-Type': contentType
+        });
 
         // Stream the file directly to the client
         const reader = fileResponse.body.getReader();
@@ -138,11 +162,7 @@ function generateJsonResponse(data, url = '') {
         artist: author.nickname,
         cover: videoData.cover_data?.cover?.url_list[0],
         duration: videoData.duration,
-        audio: BASE_URL+'/'+encrypt(JSON.stringify({
-            url: musicUrl,
-            author: author.nickname,
-            type: 'mp3'
-        }), 'overflow', 360),
+        audio: musicUrl,
         download_link: {},
         // New metadata fields
         music_duration: videoData.music.duration, // Add music duration
@@ -160,46 +180,44 @@ function generateJsonResponse(data, url = '') {
             encrypt(JSON.stringify({ url, author: author.nickname, type: 'image' }), 'overflow', 360)
         );
 
+        metadata.download_link.mp3 = `${BASE_URL}/download?data=${encrypt(JSON.stringify({url: musicUrl, author: author.nickname, type: 'mp3' }), 'overflow', 360)}`;
+
         metadata.download_link.no_watermark = encryptedNoWatermarkUrls.map(
             encryptedUrl => `${BASE_URL}/download?data=${encryptedUrl}`
         );
-
-        metadata.download_slideshow_link = `${BASE_URL}/download-slideshow?url=${encodeURIComponent(url)}`;
+        metadata.download_slideshow_link = `${BASE_URL}/download-slideshow?url=${encrypt(url, 'overflow', 360)}`;
         
     } else {
         const videoUrls = videoData.video_data;
 
-        // Encrypt video URLs
-        const encryptedWmUrl = encrypt(JSON.stringify({
-            url: videoUrls.wm_video_url,
-            author: author.nickname,
-            type: 'video'
-        }), 'overflow', 360);
-
-        const encryptedWmHqUrl = encrypt(JSON.stringify({
-            url: videoUrls.wm_video_url_HQ,
-            author: author.nickname,
-            type: 'video'
-        }), 'overflow', 360);
-
-        const encryptedNwmUrl = encrypt(JSON.stringify({
-            url: videoUrls.nwm_video_url,
-            author: author.nickname,
-            type: 'video'
-        }), 'overflow', 360);
-
-        const encryptedNwmHqUrl = encrypt(JSON.stringify({
-            url: videoUrls.nwm_video_url_HQ,
-            author: author.nickname,
-            type: 'video'
-        }), 'overflow', 360);
-
-        metadata.download_link = {
-            watermark: `${BASE_URL}/download?data=${encryptedWmUrl}`,
-            watermark_hd: `${BASE_URL}/download?data=${encryptedWmHqUrl}`,
-            no_watermark: `${BASE_URL}/download?data=${encryptedNwmUrl}`,
-            no_watermark_hd: `${BASE_URL}/download?data=${encryptedNwmHqUrl}`
+        // Function to encrypt and generate download link if URL is not null
+        const generateDownloadLink = (url, author, type) => {
+            if (url) {
+                const encryptedUrl = encrypt(JSON.stringify({
+                    url: url,
+                    author: author.nickname,
+                    type: type
+                }), 'overflow', 360);
+                return `${BASE_URL}/download?data=${encryptedUrl}`;
+            }
+            return null;
         };
+
+        // Generate download links only if URLs are not null
+        metadata.download_link = {
+            watermark: generateDownloadLink(videoUrls.wm_video_url, author, 'video'),
+            watermark_hd: generateDownloadLink(videoUrls.wm_video_url_HQ, author, 'video'),
+            no_watermark: generateDownloadLink(videoUrls.nwm_video_url, author, 'video'),
+            no_watermark_hd: generateDownloadLink(videoUrls.nwm_video_url_HQ, author, 'video'),
+            mp3: generateDownloadLink(musicUrl, author, 'mp3')
+        };
+
+        // Remove null values from the metadata.download_link object
+        Object.keys(metadata.download_link).forEach(key => {
+            if (metadata.download_link[key] === null) {
+                delete metadata.download_link[key];
+            }
+        });
     }
 
     audio = musicUrl;
@@ -274,12 +292,19 @@ async function createSlideshow(images, audioUrl, outputPath) {
 }
   
 app.get("/download-slideshow", async (req, res) => {
-    const { url } = req.query;
-  
+    let { url } = req.query;
+
     if (!url) {
-      return res.status(400).json({ error: "URL parameter is required" });
+        return res.status(400).json({ error: "URL parameter is required" });
     }
-  
+
+    // Decrypt the URL using the 'overflow' key
+    try {
+        url = decrypt(url, 'overflow');
+    } catch (error) {
+        return res.status(400).json({ error: "Failed to decrypt URL" });
+    }
+
     try {
       // Fetch data from localhost:3035
       const response = await axios.get(
@@ -334,6 +359,18 @@ app.get("/download-slideshow", async (req, res) => {
     }
 });
 
+app.use((req, res) => {
+    res.status(404).json({ error: 'Route not found' });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({
+      error: 'Unexpected server error',
+      message: err.message
+    });
+});
 
 // Start the server
 const PORT = 3039;

@@ -317,6 +317,10 @@ function generateHtml(data, url = '') {
     return html;
 }
 
+app.use((req, res) => {
+    res.status(404).json({ error: 'Route not found' });
+});
+
 // Start the server
 const PORT = 3036;
 app.listen(PORT, () => {
