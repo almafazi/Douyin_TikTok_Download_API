@@ -148,7 +148,7 @@ Some of the source code of TikHub will be open sourced on Github and will sponso
 
 -   Batch analysis on the web side (supports Douyin/TikTok hybrid analysis)
 -   Download videos or albums online.
--   Production[pip package](https://pypi.org/project/douyin-tiktok-scraper/)Easy and quick import of your project
+-   Production[pip package](https://pypi.org/project/douyin-tiktok-scraper/)方便快速导入你的项目
 -   [iOS shortcuts to quickly call API](https://apps.apple.com/cn/app/%E5%BF%AB%E6%8D%B7%E6%8C%87%E4%BB%A4/id915249334)Implement watermark-free videos/pictures in-app download
 -   Complete API documentation ([Demo/Demo](https://api.douyin.wtf/docs))
 -   Rich API interfaces:
@@ -184,7 +184,7 @@ Some of the source code of TikHub will be open sourced on Github and will sponso
         -   [x] Get user homepage information
         -   [x] Get the user's homepage fan data
         -   [x] Get user's homepage follow data
-        -   [x] Obtain data on the collection of works by users on the homepage
+        -   [x] 获取用户主页合辑作品数据
         -   [x] Get search data for users' homepage
         -   [x] Get user homepage playlist data
         -   [x] Get individual video comment data
@@ -397,7 +397,7 @@ Use the following command to check if your container is running:
 docker ps
 ```
 
-This lists all active containers. Find`douyin_tiktok_api `to confirm its normal operation.
+这将列出所有活动容器。查找`douyin_tiktok_api `to confirm its normal operation.
 
 ### Step 4: Access the application
 
