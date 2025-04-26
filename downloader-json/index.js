@@ -244,6 +244,7 @@ async function downloadFile(url, outputPath) {
   
   
 // Function to create slideshow video
+// Function to create slideshow video with looping audio
 async function createSlideshow(images, audioUrl, outputPath) {
     return new Promise((resolve, reject) => {
       const command = ffmpeg();
@@ -253,15 +254,16 @@ async function createSlideshow(images, audioUrl, outputPath) {
         command.input(image).inputOptions(['-loop 1', '-t 5']);
       });
   
-      // Add audio input (no looping)
-      command.input(audioUrl);
+      // Add audio input with loop option
+      command.input(audioUrl).inputOptions(['-stream_loop -1']); // -1 means infinite loop
   
       // Build complex filter to scale/pad images and concatenate
       const filter = [];
       images.forEach((_, index) => {
+        // Use a safer approach for scaling that won't cause padding errors
         filter.push(
-          `[${index}:v]scale=w=1080:h=-1:force_original_aspect_ratio=decrease,` +
-          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v${index}]`
+          `[${index}:v]scale=w=1080:h=1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v${index}]`
         );
       });
   
@@ -272,7 +274,7 @@ async function createSlideshow(images, audioUrl, outputPath) {
       // Calculate the total duration of the video
       const videoDuration = images.length * 5; // 5 seconds per image
   
-      // Add audio filter to trim the audio to the video duration
+      // Add audio filter to trim the looping audio to the video duration
       filter.push(`[${images.length}:a]atrim=0:${videoDuration}[aout]`);
   
       command
@@ -281,7 +283,7 @@ async function createSlideshow(images, audioUrl, outputPath) {
           '-map', '[vout]',
           '-map', '[aout]', // Maps the processed audio
           '-pix_fmt', 'yuv420p',
-          '-vsync', '2'
+          '-fps_mode', 'cfr'  // Modern replacement for -vsync 2
         ])
         .videoCodec('libx264')
         .output(outputPath)
