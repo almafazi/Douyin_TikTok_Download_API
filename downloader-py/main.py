@@ -18,15 +18,6 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from crypto import encrypt, decrypt
-import logging
-
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger("tiktok-downloader-api")
 
 # Constants
 BASE_URL = os.getenv("BASE_URL", "http://localhost:3029")  # From .env file
@@ -44,7 +35,7 @@ class TikTokRequest(BaseModel):
 class DownloadQueryParams(BaseModel):
     data: str
 
-app = FastAPI(debug=True,title="TikTok Downloader API")
+app = FastAPI(title="TikTok Downloader API")
 
 # CORS configuration
 app.add_middleware(
@@ -468,4 +459,4 @@ async def download_slideshow_endpoint(url: str, background_tasks: BackgroundTask
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=3029, reload=True, debug=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=3029, reload=True)
