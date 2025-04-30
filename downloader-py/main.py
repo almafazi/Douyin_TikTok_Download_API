@@ -35,7 +35,7 @@ class TikTokRequest(BaseModel):
 class DownloadQueryParams(BaseModel):
     data: str
 
-app = FastAPI(title="TikTok Downloader API")
+app = FastAPI(debug=True,title="TikTok Downloader API")
 
 # CORS configuration
 app.add_middleware(
