@@ -23,7 +23,7 @@ from crypto import encrypt, decrypt
 BASE_URL = os.getenv("BASE_URL", "http://localhost:3029")  # From .env file
 ENCRYPTION_KEY = "overflow"  # Same key as in original code
 TEMP_DIR = os.path.join(os.getcwd(), "temp")
-HYBRID_API_URL = "http://douyin_tiktok_download_api:8000/api/hybrid/video_data"  # Accessing host machine from Docker
+HYBRID_API_URL = os.getenv("DOUYIN_API_URL","http://douyin_tiktok_download_api:8000/api/hybrid/video_data")  # Accessing host machine from Docker
 
 # Create temp directory if it doesn't exist
 os.makedirs(TEMP_DIR, exist_ok=True)

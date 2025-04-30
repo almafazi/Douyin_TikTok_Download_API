@@ -16,3 +16,9 @@ services:  # 定义服务列表
       PUID: 1026  # 设置容器内部的用户 ID
       PGID: 100  # 设置容器内部的用户组 ID
     privileged: true  # 设置特权模式以便容器内部可以执行特权操作
+    networks:
+      - tiktok_shared_network
+
+networks:
+  tiktok_shared_network:
+    name: tiktok_shared_network

@@ -13,6 +13,14 @@ services:
       - .env
     environment:
       - BASE_URL=http://localhost:3029
+      - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000  # URL untuk akses ke API Douyin
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    networks:
+      - tiktok_shared_network
+
+networks:
+  tiktok_shared_network:
+    external: true
+    name: tiktok_shared_network
