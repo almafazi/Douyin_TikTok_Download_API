@@ -112,7 +112,7 @@ app.post('/tiktok', async (req, res) => {
         // Respond with the JSON content
         res.json(jsonResponse);
     } catch (error) {
-        console.error('Error fetching data:', error.name === 'AbortError' ? 'Request timed out' : error.message);
+        console.error('Error fetching data:', error.message);
         res.status(500).json({ error: 'Failed to fetch data from the external API' });
     }
 });
