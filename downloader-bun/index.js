@@ -6,7 +6,6 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 import bodyParser from 'body-parser';
-import { pipeline } from 'stream/promises';
 import nodeCron from 'node-cron';
 
 const app = express();
@@ -115,7 +114,7 @@ app.post('/tiktok', async (req, res) => {
     }
 });
 
-// GET endpoint at /download - Simplified with direct streaming
+// GET endpoint at /download - Modified to use pipe instead of pipeline
 app.get('/download', async (req, res) => {
     const encryptedData = req.query.data;
 
@@ -177,16 +176,22 @@ app.get('/download', async (req, res) => {
             'Transfer-Encoding': 'chunked'
         });
 
-        // Direct stream the file to the client
+        // Direct stream the file to the client using readable.pipe() instead of pipeline
         if (fileResponse.body) {
-            try {
-                await pipeline(fileResponse.body, res);
-            } catch (error) {
+            // Create a stream from fetch response body
+            const { Readable } = await import('stream');
+            const readableStream = Readable.fromWeb(fileResponse.body);
+            
+            // Handle stream errors
+            readableStream.on('error', (error) => {
+                console.error('Stream error:', error);
                 if (!res.headersSent) {
-                    console.error('Stream error:', error);
                     res.status(500).end();
                 }
-            }
+            });
+            
+            // Pipe the stream to response
+            readableStream.pipe(res);
         } else {
             throw new Error('Response body is null');
         }
@@ -288,7 +293,7 @@ const generateJsonResponse = (data, url = '') => {
     };
 };
 
-// Simplified download function using stream pipeline for consistency
+// Refactored downloadToFile function using streams instead of pipeline
 const downloadToFile = async (url, outputPath, signal) => {
     try {
         const response = await axios({
@@ -300,8 +305,26 @@ const downloadToFile = async (url, outputPath, signal) => {
         });
         
         const writer = fs.createWriteStream(outputPath);
-        await pipeline(response.data, writer);
-        return outputPath;
+        
+        return new Promise((resolve, reject) => {
+            // Set up error handlers for both streams
+            response.data.on('error', (err) => {
+                writer.end();
+                reject(err);
+            });
+            
+            writer.on('error', (err) => {
+                reject(err);
+            });
+            
+            // Set up finish handler
+            writer.on('finish', () => {
+                resolve(outputPath);
+            });
+            
+            // Pipe the data
+            response.data.pipe(writer);
+        });
     } catch (error) {
         // If file was partially created, delete it
         if (fs.existsSync(outputPath)) {
@@ -374,7 +397,7 @@ const createTempDir = (data) => {
     };
 };
 
-// Improved download-slideshow endpoint with direct streaming and immediate cleanup
+// Improved download-slideshow endpoint with direct streaming (without pipeline)
 app.get("/download-slideshow", async (req, res) => {
     let { url } = req.query;
     let dirToCleanup = null;
@@ -474,17 +497,29 @@ app.get("/download-slideshow", async (req, res) => {
             'Transfer-Encoding': 'chunked'
         });
         
-        // Use pipeline to stream the file with proper error handling
+        // Use createReadStream and pipe instead of pipeline
         const fileStream = fs.createReadStream(outputPath);
-        await pipeline(fileStream, res);
         
-        // After successful streaming, clean up the temp directory
-        try {
-            fs.rmSync(dirPath, { recursive: true, force: true });
-            console.log(`Successfully removed temp directory after streaming: ${dirPath}`);
-        } catch (cleanupError) {
-            console.error(`Error cleaning up temp directory ${dirPath}:`, cleanupError);
-        }
+        fileStream.on('error', (error) => {
+            console.error('Error streaming file:', error);
+            if (!res.headersSent) {
+                res.status(500).end();
+            }
+        });
+        
+        // Handle finish event to cleanup after streaming is done
+        res.on('finish', () => {
+            // After successful streaming, clean up the temp directory
+            try {
+                fs.rmSync(dirPath, { recursive: true, force: true });
+                console.log(`Successfully removed temp directory after streaming: ${dirPath}`);
+            } catch (cleanupError) {
+                console.error(`Error cleaning up temp directory ${dirPath}:`, cleanupError);
+            }
+        });
+        
+        // Pipe the file to the response
+        fileStream.pipe(res);
         
     } catch (error) {
         console.error("Error:", error);
@@ -505,8 +540,7 @@ app.get("/download-slideshow", async (req, res) => {
     }
 });
 
-// Saat masih membutuhkan node-cron untuk membersihkan folder-folder yang mungkin tertinggal
-// karena error, namun frekuensinya bisa dikurangi menjadi setiap 12 jam
+// Cleanup job for old temporary files
 nodeCron.schedule('0 */1 * * *', () => {
     console.log('Running cleanup job for any remaining temporary files...');
     
