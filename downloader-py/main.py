@@ -18,6 +18,15 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from crypto import encrypt, decrypt
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("tiktok-downloader-api")
 
 # Constants
 BASE_URL = os.getenv("BASE_URL", "http://localhost:3029")  # From .env file
