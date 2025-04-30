@@ -1,5 +1,4 @@
 import express from 'express';
-import tmp from 'tmp';
 import cors from 'cors';
 import { encrypt, decrypt } from './crypto.js';
 import ffmpeg from 'fluent-ffmpeg';
@@ -8,6 +7,7 @@ import path from 'path';
 import axios from 'axios';
 import bodyParser from 'body-parser';
 import { pipeline } from 'stream/promises';
+import nodeCron from 'node-cron';
 
 const app = express();
 ffmpeg.setFfmpegPath('ffmpeg');
@@ -16,8 +16,12 @@ const BASE_URL = process.env.BASE_URL;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow'; // Better to use env var
 const ALLOWED_ORIGINS = ['http://localhost', 'http://127.0.0.1', 'https://snaptik.fit'];
 
-// Temp file cleanup configuration
-tmp.setGracefulCleanup(); // Enable auto-cleanup on process exit
+// Temp directory setup - replacing tmp library with manual directory management
+const TEMP_DIR = path.join(process.cwd(), 'temp_files');
+if (!fs.existsSync(TEMP_DIR)) {
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+  console.log(`Created temp directory at: ${TEMP_DIR}`);
+}
 
 // CORS middleware with specific origins
 app.use(
@@ -43,13 +47,13 @@ app.use(
 
 // Request size limiting and JSON validation
 app.use(express.json({
-    limit: '5mb', // Reduced from 10mb for security
+    limit: '5mb',
     strict: true,
     verify: (req, res, buf, encoding) => {
       try {
         JSON.parse(buf.toString());
       } catch (e) {
-        console.error('Invalid JSON:', buf.toString().substring(0, 100)); // Log just the beginning for security
+        console.error('Invalid JSON:', buf.toString().substring(0, 100));
         throw new Error('Invalid JSON');
       }
     }
@@ -59,7 +63,6 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '5mb' }));
 
 // Request timeout middleware
 const timeoutMiddleware = (req, res, next) => {
-  // Set timeout for all requests
   req.setTimeout(30000, () => {
     res.status(408).json({ error: 'Request timeout' });
   });
@@ -75,11 +78,6 @@ app.post('/tiktok', async (req, res) => {
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
-
-    // // Basic TikTok URL validation
-    // if (!url.match(/^https:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com)/)) {
-    //     return res.status(400).json({ error: 'Invalid TikTok URL' });
-    // }
 
     try {
         // Create a controller to abort the fetch if needed
@@ -117,10 +115,9 @@ app.post('/tiktok', async (req, res) => {
     }
 });
 
-// GET endpoint at /download
+// GET endpoint at /download - Simplified with direct streaming
 app.get('/download', async (req, res) => {
     const encryptedData = req.query.data;
-    let fileResponse = null;
 
     if (!encryptedData) {
         return res.status(400).json({ error: 'Encrypted data parameter is required' });
@@ -147,7 +144,7 @@ app.get('/download', async (req, res) => {
         res.on('close', onClose);
 
         // Fetch the file from the decrypted URL with timeout
-        fileResponse = await fetch(url, { signal });
+        const fileResponse = await fetch(url, { signal });
 
         if (!fileResponse.ok) {
             throw new Error(`Failed to fetch file: ${fileResponse.statusText}`);
@@ -177,18 +174,14 @@ app.get('/download', async (req, res) => {
             'x-filename': encodedFilename,
             'Content-Disposition': `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`,
             'Content-Type': contentType,
-            'Transfer-Encoding': 'chunked' // Explicitly use chunked encoding
+            'Transfer-Encoding': 'chunked'
         });
 
-        // Stream the file directly to the client using stream pipeline
+        // Direct stream the file to the client
         if (fileResponse.body) {
             try {
-                await pipeline(
-                    fileResponse.body,
-                    res
-                );
+                await pipeline(fileResponse.body, res);
             } catch (error) {
-                // This will catch stream errors, including client disconnects
                 if (!res.headersSent) {
                     console.error('Stream error:', error);
                     res.status(500).end();
@@ -201,16 +194,6 @@ app.get('/download', async (req, res) => {
         console.error('Error downloading file:', error);
         if (!res.headersSent) {
             res.status(500).json({ error: 'Failed to download file' });
-        }
-    } finally {
-        // Clean up resources even if client disconnects
-        if (fileResponse && fileResponse.body) {
-            try {
-                // Ensure the stream is closed if it hasn't been fully consumed
-                fileResponse.body.cancel();
-            } catch (e) {
-                console.error('Error closing response stream:', e);
-            }
         }
     }
 });
@@ -305,182 +288,96 @@ const generateJsonResponse = (data, url = '') => {
     };
 };
 
-// Improved downloadFile function with better resource management
-const downloadFile = async (url, outputPath, abortSignal) => {
-    let response = null;
-    let writer = null;
-    
+// Simplified download function using stream pipeline for consistency
+const downloadToFile = async (url, outputPath, signal) => {
     try {
-        response = await axios({
+        const response = await axios({
             url,
-            responseType: "stream",
-            signal: abortSignal,
-            timeout: 30000 // 30 second timeout
+            method: 'GET',
+            responseType: 'stream',
+            signal,
+            timeout: 30000
         });
         
-        writer = fs.createWriteStream(outputPath);
-        
-        // Set up Promise with proper cleanup
-        return new Promise((resolve, reject) => {
-            // Pipe the data
-            response.data.pipe(writer);
-            
-            // Handle success
-            writer.on("finish", () => {
-                writer.close();
-                resolve();
-            });
-            
-            // Handle errors
-            writer.on("error", (err) => {
-                cleanupResources();
-                reject(err);
-            });
-            
-            // Handle request abortion
-            if (abortSignal) {
-                abortSignal.addEventListener('abort', () => {
-                    cleanupResources();
-                    reject(new Error('Download aborted'));
-                });
-            }
-            
-            // Cleanup function to prevent memory leaks
-            function cleanupResources() {
-                if (writer) {
-                    writer.close();
-                    writer = null;
-                }
-                
-                if (response && response.data) {
-                    response.data.destroy();
-                }
-                
-                // Delete the partial file if it exists
-                try {
-                    if (fs.existsSync(outputPath)) {
-                        fs.unlinkSync(outputPath);
-                    }
-                } catch (unlinkError) {
-                    console.error(`Failed to delete partial file ${outputPath}:`, unlinkError);
-                }
-            }
-        });
+        const writer = fs.createWriteStream(outputPath);
+        await pipeline(response.data, writer);
+        return outputPath;
     } catch (error) {
-        // Clean up resources in case of axios error
-        if (response && response.data) {
-            response.data.destroy();
+        // If file was partially created, delete it
+        if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
         }
-        
-        if (writer) {
-            writer.close();
-        }
-        
-        // Delete the partial file if it exists
-        try {
-            if (fs.existsSync(outputPath)) {
-                fs.unlinkSync(outputPath);
-            }
-        } catch (unlinkError) {
-            console.error(`Failed to delete partial file ${outputPath}:`, unlinkError);
-        }
-        
         throw error;
     }
 };
-  
-// Improved createSlideshow function with better resource management
-const createSlideshow = async (images, audioUrl, outputPath, abortSignal) => {
-    let ffmpegProcess = null;
-    
+
+// Simplified createSlideshow function
+const createSlideshow = (images, audioPath, outputPath) => {
     return new Promise((resolve, reject) => {
-        try {
-            const command = ffmpeg();
-            
-            // Add images with loop and duration
-            images.forEach((image) => {
-                command.input(image).inputOptions(['-loop 1', '-t 3']);
-            });
-            
-            // Add audio input with loop option
-            command.input(audioUrl).inputOptions(['-stream_loop -1']); // -1 means infinite loop
-            
-            // Build complex filter to scale/pad images and concatenate
-            const filter = [];
-            images.forEach((_, index) => {
-                filter.push(
-                    `[${index}:v]scale=w=1080:h=1920:force_original_aspect_ratio=decrease,` +
-                    `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v${index}]`
-                );
-            });
-            
-            // Concatenate all scaled/padded video streams
-            const concatInputs = images.map((_, i) => `[v${i}]`).join('');
-            filter.push(`${concatInputs}concat=n=${images.length}:v=1:a=0[vout]`);
-            
-            // Calculate the total duration of the video
-            const videoDuration = images.length * 3; // 3 seconds per image
-            
-            // Add audio filter to trim the looping audio to the video duration
-            filter.push(`[${images.length}:a]atrim=0:${videoDuration}[aout]`);
-            
-            ffmpegProcess = command
-                .complexFilter(filter)
-                .outputOptions([
-                    '-map', '[vout]',
-                    '-map', '[aout]',
-                    '-pix_fmt', 'yuv420p',
-                    '-fps_mode', 'cfr'
-                ])
-                .videoCodec('libx264')
-                .output(outputPath)
-                .on('end', () => resolve(outputPath))
-                .on('error', (err) => {
-                    cleanupOnError();
-                    reject(err);
-                });
-            
-            // Set up abort handling
-            if (abortSignal) {
-                abortSignal.addEventListener('abort', () => {
-                    cleanupOnError();
-                    reject(new Error('Slideshow creation aborted'));
-                });
-            }
-            
-            ffmpegProcess.run();
-        } catch (error) {
-            cleanupOnError();
-            reject(error);
-        }
+        const command = ffmpeg();
         
-        // Function to clean up resources on error
-        function cleanupOnError() {
-            if (ffmpegProcess) {
-                try {
-                    ffmpegProcess.kill('SIGKILL'); // Forcefully terminate ffmpeg
-                } catch (killError) {
-                    console.error('Error killing ffmpeg process:', killError);
-                }
-            }
-            
-            // Try to delete output file if it exists
-            try {
-                if (fs.existsSync(outputPath)) {
-                    fs.unlinkSync(outputPath);
-                }
-            } catch (unlinkError) {
-                console.error(`Failed to delete output file ${outputPath}:`, unlinkError);
-            }
-        }
+        // Add images with loop and duration
+        images.forEach((image) => {
+            command.input(image).inputOptions(['-loop 1', '-t 3']);
+        });
+        
+        // Add audio input with loop option
+        command.input(audioPath).inputOptions(['-stream_loop -1']);
+        
+        // Build complex filter to scale/pad images and concatenate
+        const filter = [];
+        images.forEach((_, index) => {
+            filter.push(
+                `[${index}:v]scale=w=1080:h=1920:force_original_aspect_ratio=decrease,` +
+                `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v${index}]`
+            );
+        });
+        
+        // Concatenate all scaled/padded video streams
+        const concatInputs = images.map((_, i) => `[v${i}]`).join('');
+        filter.push(`${concatInputs}concat=n=${images.length}:v=1:a=0[vout]`);
+        
+        // Calculate the total duration of the video
+        const videoDuration = images.length * 3; // 3 seconds per image
+        
+        // Add audio filter to trim the looping audio to the video duration
+        filter.push(`[${images.length}:a]atrim=0:${videoDuration}[aout]`);
+        
+        command
+            .complexFilter(filter)
+            .outputOptions([
+                '-map', '[vout]',
+                '-map', '[aout]',
+                '-pix_fmt', 'yuv420p',
+                '-fps_mode', 'cfr'
+            ])
+            .videoCodec('libx264')
+            .output(outputPath)
+            .on('end', () => resolve(outputPath))
+            .on('error', reject)
+            .run();
     });
 };
-  
-// Improved download-slideshow endpoint with parallel downloads and better resource management
+
+// Function to create a unique temporary directory for a TikTok
+const createTempDir = (data) => {
+    const dirId = `${data.aweme_id}_${data.author.uid}`;
+    const dirPath = path.join(TEMP_DIR, dirId);
+    
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+    
+    return {
+        dirPath,
+        dirId
+    };
+};
+
+// Improved download-slideshow endpoint with direct streaming and immediate cleanup
 app.get("/download-slideshow", async (req, res) => {
     let { url } = req.query;
-    let tmpDir = null;
-    let fileStream = null;
+    let dirToCleanup = null;
 
     if (!url) {
         return res.status(400).json({ error: "URL parameter is required" });
@@ -493,31 +390,20 @@ app.get("/download-slideshow", async (req, res) => {
     // Handle client disconnect
     const onClose = () => {
         abortController.abort();
-        cleanup();
-        res.removeListener('close', onClose);
-    };
-    res.on('close', onClose);
-
-    // Function to clean up all resources
-    const cleanup = () => {
-        // Close file stream if it exists
-        if (fileStream) {
+        
+        // Cleanup temp directory on disconnect
+        if (dirToCleanup && fs.existsSync(dirToCleanup)) {
             try {
-                fileStream.destroy();
-            } catch (streamError) {
-                console.error("Error closing file stream:", streamError);
+                fs.rmSync(dirToCleanup, { recursive: true, force: true });
+                console.log(`Cleaned up directory after client disconnect: ${dirToCleanup}`);
+            } catch (error) {
+                console.error(`Failed to clean up directory after disconnect: ${dirToCleanup}`, error);
             }
         }
         
-        // Remove temporary directory and all contents
-        if (tmpDir) {
-            try {
-                tmpDir.removeCallback();
-            } catch (cleanupError) {
-                console.error("Error cleaning up temp directory:", cleanupError);
-            }
-        }
+        res.removeListener('close', onClose);
     };
+    res.on('close', onClose);
 
     try {
         // Decrypt the URL
@@ -537,65 +423,119 @@ app.get("/download-slideshow", async (req, res) => {
         if (data.type !== "image") {
             return res.status(400).json({ error: "Only image posts are supported" });
         }
-    
-        // Create a unique temporary directory for files
-        tmpDir = tmp.dirSync({ unsafeCleanup: true }); // Will be cleaned up automatically
-        const tmpDirPath = tmpDir.name;
-    
-        // Download images in parallel
-        const imageUrls = data.image_data.no_watermark_image_list;
-        const downloadImagePromises = imageUrls.map((imageUrl, i) => {
-            const imagePath = path.join(tmpDirPath, `image_${i}.jpg`);
-            return downloadFile(imageUrl, imagePath, signal)
-                .then(() => imagePath)
-                .catch(error => {
-                    // Clean up this specific file if download fails
-                    try {
-                        if (fs.existsSync(imagePath)) {
-                            fs.unlinkSync(imagePath);
-                        }
-                    } catch (cleanupErr) {
-                        console.error(`Failed to clean up image file ${imagePath}:`, cleanupErr);
-                    }
-                    throw error; // Re-throw to be caught by Promise.all
-                });
-        });
+        
+        // Create temp directory based on aweme_id and author.uid
+        const { dirPath, dirId } = createTempDir(data);
+        dirToCleanup = dirPath; // Store for cleanup in case of errors
+        
+        const outputPath = path.join(dirPath, "slideshow.mp4");
+        
+        // Check if we need to generate the slideshow or if it already exists
+        let needToGenerate = true;
+        
+        if (fs.existsSync(outputPath)) {
+            // If file exists, we can use it directly
+            needToGenerate = false;
+        }
+        
+        // If we need to generate the slideshow
+        if (needToGenerate) {
+            // Download images in parallel using Promise.all
+            const imageUrls = data.image_data.no_watermark_image_list;
+            const downloadImagePromises = imageUrls.map((imageUrl, i) => {
+                const imagePath = path.join(dirPath, `image_${i}.jpg`);
+                return downloadToFile(imageUrl, imagePath, signal)
+                    .then(() => imagePath)
+                    .catch(error => {
+                        console.error(`Failed to download image ${i}:`, error);
+                        throw error; // Re-throw to be caught by Promise.all
+                    });
+            });
 
-        const imagePaths = await Promise.all(downloadImagePromises);
+            const imagePaths = await Promise.all(downloadImagePromises);
+        
+            // Download audio
+            const audioUrl = data.music.play_url.url_list[0];
+            const audioPath = path.join(dirPath, "audio.mp3");
+            await downloadToFile(audioUrl, audioPath, signal);
+        
+            // Create slideshow video
+            await createSlideshow(imagePaths, audioPath, outputPath);
+        }
     
-        // Download audio
-        const audioUrl = data.music.play_url.url_list[0];
-        const audioPath = path.join(tmpDirPath, "audio.mp3");
-        await downloadFile(audioUrl, audioPath, signal);
-    
-        // Create slideshow video
-        const outputPath = path.join(tmpDirPath, "slideshow.mp4");
-        await createSlideshow(imagePaths, audioPath, outputPath, signal);
-    
-        // Generate a unique download filename
+        // Generate a nice filename for download
         const authorNickname = data.author.nickname.replace(/[^a-zA-Z0-9]/g, '_');
-        const uniqueFilename = `${authorNickname}_${Date.now()}.mp4`;
+        const fileName = `${authorNickname}_slideshow.mp4`;
     
         // Stream the file to the client
-        fileStream = fs.createReadStream(outputPath);
-        
         res.set({
             'Content-Type': 'video/mp4',
-            'Content-Disposition': `attachment; filename="${encodeURIComponent(uniqueFilename)}"`,
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(fileName)}"`,
             'Transfer-Encoding': 'chunked'
         });
         
-        // Use pipeline for proper stream handling
+        // Use pipeline to stream the file with proper error handling
+        const fileStream = fs.createReadStream(outputPath);
         await pipeline(fileStream, res);
+        
+        // After successful streaming, clean up the temp directory
+        try {
+            fs.rmSync(dirPath, { recursive: true, force: true });
+            console.log(`Successfully removed temp directory after streaming: ${dirPath}`);
+        } catch (cleanupError) {
+            console.error(`Error cleaning up temp directory ${dirPath}:`, cleanupError);
+        }
         
     } catch (error) {
         console.error("Error:", error);
+        
+        // Cleanup on error
+        if (dirToCleanup && fs.existsSync(dirToCleanup)) {
+            try {
+                fs.rmSync(dirToCleanup, { recursive: true, force: true });
+                console.log(`Cleaned up directory after error: ${dirToCleanup}`);
+            } catch (cleanupError) {
+                console.error(`Failed to clean up directory after error: ${dirToCleanup}`, cleanupError);
+            }
+        }
+        
         if (!res.headersSent) {
             res.status(500).json({ error: "Failed to create slideshow" });
         }
-    } finally {
-        // Ensure all resources are cleaned up
-        cleanup();
+    }
+});
+
+// Saat masih membutuhkan node-cron untuk membersihkan folder-folder yang mungkin tertinggal
+// karena error, namun frekuensinya bisa dikurangi menjadi setiap 12 jam
+nodeCron.schedule('0 */1 * * *', () => {
+    console.log('Running cleanup job for any remaining temporary files...');
+    
+    const currentTime = Date.now();
+    const TWO_HOURS = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+    
+    // Read all directories in TEMP_DIR
+    try {
+        const dirs = fs.readdirSync(TEMP_DIR);
+        
+        dirs.forEach(dirName => {
+            const dirPath = path.join(TEMP_DIR, dirName);
+            
+            // Check if it's a directory
+            if (fs.statSync(dirPath).isDirectory()) {
+                const stats = fs.statSync(dirPath);
+                const fileAge = currentTime - stats.mtime.getTime();
+                
+                // If directory is older than 2 hours, delete it and its contents
+                if (fileAge > TWO_HOURS) {
+                    console.log(`Removing old temporary directory: ${dirPath}`);
+                    fs.rmSync(dirPath, { recursive: true, force: true });
+                }
+            }
+        });
+        
+        console.log('Cleanup completed.');
+    } catch (error) {
+        console.error('Error during cleanup:', error);
     }
 });
 
