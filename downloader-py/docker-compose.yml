@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  tiktok-api:
+    build: .
+    container_name: tiktok-downloader-api
+    ports:
+      - "3029:3029"
+    volumes:
+      - ./temp:/app/temp
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - BASE_URL=http://localhost:3029
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
