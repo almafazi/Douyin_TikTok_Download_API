@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import httpx
 import asyncio
+import uvicorn
 import uuid
 from urllib.parse import quote
 
@@ -21,9 +22,9 @@ from crypto import encrypt, decrypt
 
 # Constants
 BASE_URL = os.getenv("BASE_URL", "https://tt.y2mate.biz.id")  # From .env file
-ENCRYPTION_KEY = "overflow"  # Same key as in original code
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "overflow")  # Changed to use env var with fallback
 TEMP_DIR = os.path.join(os.getcwd(), "temp")
-HYBRID_API_URL = os.getenv("DOUYIN_API_URL","http://douyin_tiktok_download_api:8000/api/hybrid/video_data")  # Accessing host machine from Docker
+HYBRID_API_URL = os.getenv("DOUYIN_API_URL", "http://douyin_tiktok_download_api:8000/api/hybrid/video_data")
 
 # Create temp directory if it doesn't exist
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -75,145 +76,215 @@ async def start_scheduler():
 async def run_cleanup_scheduler():
     while True:
         await cleanup_temp_files()
-        # Run every 15 minutes
+        # Run every 30 minutes
         await asyncio.sleep(30 * 60)
 
+def get_nested_value(data, keys, default=None):
+    """
+    Safely get nested dictionary values with fallback
+    
+    Args:
+        data (dict): The dictionary to extract from
+        keys (list): List of keys to traverse
+        default: Default value if any key is missing
+        
+    Returns:
+        The value or default if not found
+    """
+    result = data
+    for key in keys:
+        if not isinstance(result, dict):
+            return default
+        result = result.get(key, default)
+        if result is None:
+            return default
+    return result
+
+
+def get_first_from_nested_list(data, keys, default=''):
+    """
+    Safely get the first item from a nested list within a dictionary
+    
+    Args:
+        data (dict): The dictionary to extract from
+        keys (list): List of keys to traverse
+        default: Default value if any key is missing or list is empty
+        
+    Returns:
+        The first list item or default if not found
+    """
+    nested_list = get_nested_value(data, keys, [])
+    return nested_list[0] if nested_list else default
+
+
+def generate_encrypted_download_link(url, author_nickname, media_type, encryption_key, base_url, expiry=360):
+    """
+    Generate encrypted download link
+    
+    Args:
+        url (str): The source URL
+        author_nickname (str): Content creator's nickname
+        media_type (str): Type of media (video, image, mp3)
+        encryption_key (str): The encryption key
+        base_url (str): Base URL for the download endpoint
+        expiry (int): Expiry time in seconds
+        
+    Returns:
+        str: Generated download link or None if error
+    """
+    if not url:
+        return None
+    
+    try:
+        encrypted_url = encrypt(
+            json.dumps({
+                "url": url,
+                "author": author_nickname,
+                "type": media_type
+            }),
+            encryption_key,
+            expiry
+        )
+        return f"{base_url}/download?data={encrypted_url}"
+    except Exception as e:
+        print(f"Error generating download link for {media_type}: {e}")
+        return None
+
+
 def generate_json_response(data: Dict[str, Any], url: str = '') -> Dict[str, Any]:
-    """Generate JSON response similar to the original Node.js function"""
+    """
+    Generate JSON response with video/image metadata
+    
+    Args:
+        data (dict): The data from TikTok API
+        url (str): Original TikTok URL
+        
+    Returns:
+        dict: Formatted response with metadata and download links
+    """
     try:
         video_data = data.get("data", {})
         
-        # Safely get nested values with fallbacks for all required fields
-        author = video_data.get("author", {})
-        statistics = video_data.get("statistics", {})
-        
-        # Handle potential missing music data
-        music = video_data.get("music", {})
-        play_url = music.get("play_url", {})
-        music_url = play_url.get("uri", play_url.get("url", ""))
-        
-        # Check if it's an image post
+        # Check content type
         is_image = video_data.get("type") == "image"
         
-        # Build author data with safe gets
+        # Extract author data
+        author = video_data.get("author", {})
+        author_nickname = author.get("nickname", "Unknown")
+        
+        # Build author metadata
         filtered_author = {
-            "nickname": author.get("nickname", "Unknown"),
+            "nickname": author_nickname,
             "signature": author.get("signature", ""),
-            "avatar": (author.get("avatar_thumb", {}).get("url_list", [""])[0] 
-                      if author.get("avatar_thumb", {}).get("url_list") 
-                      else '')
+            "avatar": get_first_from_nested_list(author, ["avatar_thumb", "url_list"])
         }
         
-        # Initialize default values for metadata
-        picker = []
+        # Extract statistics
+        statistics = video_data.get("statistics", {})
+        stats_metadata = {
+            "repost_count": statistics.get("repost_count", 0),
+            "comment_count": statistics.get("comment_count", 0),
+            "digg_count": statistics.get("digg_count", 0),
+            "play_count": statistics.get("play_count", 0)
+        }
+        
+        # Extract music data
+        music = video_data.get("music", {})
+        music_url = get_nested_value(music, ["play_url", "uri"], 
+                    get_nested_value(music, ["play_url", "url"], ""))
+        
+        # Basic metadata common to both image and video
         metadata = {
             "title": video_data.get("desc", ""),
             "description": video_data.get("desc", ""),
-            "statistics": {
-                "repost_count": statistics.get("repost_count", 0),
-                "comment_count": statistics.get("comment_count", 0),
-                "digg_count": statistics.get("digg_count", 0),
-                "play_count": statistics.get("play_count", 0)
-            },
-            "artist": author.get("nickname", "Unknown"),
-            "cover": (video_data.get("cover_data", {}).get("cover", {}).get("url_list", [""])[0] 
-                     if video_data.get("cover_data", {}).get("cover", {}).get("url_list") 
-                     else None),
-            "duration": video_data.get("duration", 0),  # Default to 0 if missing
+            "statistics": stats_metadata,
+            "artist": author_nickname,
+            "cover": get_first_from_nested_list(video_data, ["cover_data", "cover", "url_list"]),
+            "duration": video_data.get("duration", 0),
             "audio": music_url,
-            "download_link": {},
-            "music_duration": music.get("duration", 0),  # Default to 0 if missing
-            "author": filtered_author
+            "music_duration": music.get("duration", 0),
+            "author": filtered_author,
+            "download_link": {}
         }
         
+        # Process MP3 download link (common to both types)
+        mp3_link = generate_encrypted_download_link(
+            music_url, author_nickname, "mp3", ENCRYPTION_KEY, BASE_URL
+        )
+        if mp3_link:
+            metadata["download_link"]["mp3"] = mp3_link
+        
+        # Image-specific processing
         if is_image:
-            # Safely get image data
+            # Get image list
             image_data = video_data.get("image_data", {})
             no_watermark_images = image_data.get("no_watermark_image_list", [])
             
+            # Create picker for image gallery
             picker = [
-                {
-                    "type": "photo",
-                    "url": img_url
-                } for img_url in no_watermark_images
+                {"type": "photo", "url": img_url}
+                for img_url in no_watermark_images
             ]
             
-            # Generate encrypted URLs for each image
-            encrypted_no_watermark_urls = []
+            # Generate image download links
+            encrypted_image_links = []
             for img_url in no_watermark_images:
-                try:
-                    encrypted_url = encrypt(
-                        json.dumps({"url": img_url, "author": author.get("nickname", "Unknown"), "type": "image"}), 
-                        ENCRYPTION_KEY, 
-                        360
-                    )
-                    encrypted_no_watermark_urls.append(encrypted_url)
-                except Exception as e:
-                    print(f"Error encrypting image URL: {e}")
+                link = generate_encrypted_download_link(
+                    img_url, author_nickname, "image", ENCRYPTION_KEY, BASE_URL
+                )
+                if link:
+                    encrypted_image_links.append(link)
             
-            # Generate MP3 download link
-            try:
-                mp3_data = json.dumps({'url': music_url, 'author': author.get("nickname", "Unknown"), 'type': 'mp3'})
-                mp3_encrypted = encrypt(mp3_data, ENCRYPTION_KEY, 360)
-                metadata["download_link"]["mp3"] = f"{BASE_URL}/download?data={mp3_encrypted}"
-            except Exception as e:
-                print(f"Error generating MP3 download link: {e}")
-            
-            # Add all image download links
-            metadata["download_link"]["no_watermark"] = [
-                f"{BASE_URL}/download?data={encrypted_url}" for encrypted_url in encrypted_no_watermark_urls
-            ]
+            if encrypted_image_links:
+                metadata["download_link"]["no_watermark"] = encrypted_image_links
             
             # Add slideshow download link
             try:
                 metadata["download_slideshow_link"] = f"{BASE_URL}/download-slideshow?url={encrypt(url, ENCRYPTION_KEY, 360)}"
             except Exception as e:
                 print(f"Error generating slideshow link: {e}")
-                
+            
+            return {
+                "status": "picker",
+                "photos": picker,
+                **metadata
+            }
+            
+        # Video-specific processing
         else:
-            # Handle video type content
             video_urls = video_data.get("video_data", {})
             
-            # Helper function to safely generate download link
-            def generate_download_link(url, author_data, media_type):
-                if not url:
-                    return None
-                try:
-                    encrypted_url = encrypt(
-                        json.dumps({
-                            "url": url,
-                            "author": author_data.get("nickname", "Unknown"),
-                            "type": media_type
-                        }),
-                        ENCRYPTION_KEY,
-                        360
-                    )
-                    return f"{BASE_URL}/download?data={encrypted_url}"
-                except Exception as e:
-                    print(f"Error generating download link for {media_type}: {e}")
-                    return None
-            
-            # Generate all download links
+            # Generate all video download links
             download_links = {
-                "watermark": generate_download_link(video_urls.get("wm_video_url"), author, "video"),
-                "watermark_hd": generate_download_link(video_urls.get("wm_video_url_HQ"), author, "video"),
-                "no_watermark": generate_download_link(video_urls.get("nwm_video_url"), author, "video"),
-                "no_watermark_hd": generate_download_link(video_urls.get("nwm_video_url_HQ"), author, "video"),
-                "mp3": generate_download_link(music_url, author, "mp3")
+                "watermark": generate_encrypted_download_link(
+                    video_urls.get("wm_video_url"), author_nickname, "video", ENCRYPTION_KEY, BASE_URL
+                ),
+                "watermark_hd": generate_encrypted_download_link(
+                    video_urls.get("wm_video_url_HQ"), author_nickname, "video", ENCRYPTION_KEY, BASE_URL
+                ),
+                "no_watermark": generate_encrypted_download_link(
+                    video_urls.get("nwm_video_url"), author_nickname, "video", ENCRYPTION_KEY, BASE_URL
+                ),
+                "no_watermark_hd": generate_encrypted_download_link(
+                    video_urls.get("nwm_video_url_HQ"), author_nickname, "video", ENCRYPTION_KEY, BASE_URL
+                )
             }
+            
+            # Add mp3 link (already generated above)
+            if mp3_link:
+                download_links["mp3"] = mp3_link
             
             # Remove null values
             metadata["download_link"] = {k: v for k, v in download_links.items() if v is not None}
-        
-        print(f"Successfully generated response with status: {'picker' if is_image else 'tunnel'}")
-        return {
-            "status": "picker" if is_image else "tunnel",
-            "photos": picker,
-            **metadata
-        }
-        
+            
+            return {
+                "status": "tunnel",
+                "photos": [],
+                **metadata
+            }
+            
     except Exception as e:
-        # Log the error but return a minimal valid response
+        # Log the error with traceback
         import traceback
         print(f"Error in generate_json_response: {str(e)}")
         print(traceback.format_exc())
@@ -224,7 +295,7 @@ def generate_json_response(data: Dict[str, Any], url: str = '') -> Dict[str, Any
             "error": f"Error processing response: {str(e)}",
             "url": url
         }
-    
+
 @app.post("/tiktok")
 async def tiktok_endpoint(request: TikTokRequest):
     """Handle TikTok URL processing"""
@@ -341,7 +412,7 @@ async def create_slideshow(images: List[str], audio_path: str, output_path: str)
     filter_complex.append(f"{concat_inputs}concat=n={len(images)}:v=1:a=0[vout]")
     
     # Calculate the total duration of the video
-    video_duration = len(images) * 3  # 5 seconds per image
+    video_duration = len(images) * 3  # 3 seconds per image
     
     # Add audio filter to trim the looping audio to the video duration
     filter_complex.append(f"[{len(images)}:a]atrim=0:{video_duration}[aout]")
@@ -367,7 +438,7 @@ async def create_slideshow(images: List[str], audio_path: str, output_path: str)
         "-preset", "medium",  # Balance between speed and quality
         "-c:v", "libx264",
         "-c:a", "aac",
-        "-fps_mode","cfr",
+        "-fps_mode", "cfr",
         "-strict", "experimental",
         "-b:a", "192k",
         "-shortest",  # End when shortest input ends
@@ -432,7 +503,11 @@ async def download_slideshow_endpoint(url: str, background_tasks: BackgroundTask
                 image_paths.append(image_path)
             
             # Download audio
-            audio_url = data["music"]["play_url"]["url_list"][0]
+            # Use helper function to safely get audio URL
+            audio_url = get_first_from_nested_list(data["music"], ["play_url", "url_list"])
+            if not audio_url:
+                raise HTTPException(status_code=500, detail="Could not find audio URL")
+                
             audio_path = os.path.join(temp_dir, "audio.mp3")
             await download_file(audio_url, audio_path)
             
@@ -458,5 +533,4 @@ async def download_slideshow_endpoint(url: str, background_tasks: BackgroundTask
         raise HTTPException(status_code=500, detail=f"Error creating slideshow: {str(e)}")
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=3029, reload=True)
