@@ -12,7 +12,7 @@ services:
     env_file:
       - .env
     environment:
-      - BASE_URL=http://localhost:3029
+      - BASE_URL=https:/tt.y2mate.biz.id
       - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000  # URL untuk akses ke API Douyin
     extra_hosts:
       - "host.docker.internal:host-gateway"
