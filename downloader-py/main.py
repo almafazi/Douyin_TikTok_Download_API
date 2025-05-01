@@ -239,8 +239,7 @@ async def tiktok_endpoint(request: TikTokRequest):
                 headers={"Content-Type": "application/json"},
                 timeout=30.0
             )
-            print(HYBRID_API_URL)
-            print(response)
+            
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=500, 
