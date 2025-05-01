@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 import httpx
 import asyncio
 import uvicorn
+import uvloop  # Added uvloop for better performance
 import uuid
 from urllib.parse import quote
 
@@ -17,6 +18,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware  # Added for response compression
 
 from crypto import encrypt, decrypt
 
@@ -28,6 +30,9 @@ HYBRID_API_URL = os.getenv("DOUYIN_API_URL", "http://douyin_tiktok_download_api:
 
 # Create temp directory if it doesn't exist
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+# Storage for file timestamps - for smarter temp file management
+file_timestamps = {}
 
 # Models
 class TikTokRequest(BaseModel):
@@ -48,23 +53,43 @@ app.add_middleware(
     expose_headers=["content-disposition", "x-filename"],
 )
 
+# Add compression middleware (Optimization 4: Response Compression)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # Background task to remove expired temp files
+# Optimization 5: Smarter Temp File Management
 async def cleanup_temp_files():
-    """Remove temporary files and folders older than 1 hour"""
+    """Remove temporary files and folders older than 1 hour with improved tracking"""
     try:
         current_time = datetime.now()
+        expired_items = []
+        
+        # First pass: identify expired items
         for item in os.listdir(TEMP_DIR):
             item_path = os.path.join(TEMP_DIR, item)
             if os.path.isdir(item_path):
-                # Get folder modification time
-                modified_time = datetime.fromtimestamp(os.path.getmtime(item_path))
-                # If older than 1 hour, remove it
-                if current_time - modified_time > timedelta(hours=1):
-                    try:
-                        shutil.rmtree(item_path)
-                        print(f"Removed old temp directory: {item_path}")
-                    except Exception as e:
-                        print(f"Error removing directory {item_path}: {e}")
+                # Check if we have a timestamp recorded
+                if item_path in file_timestamps:
+                    timestamp = file_timestamps[item_path]
+                else:
+                    # Get folder modification time if no timestamp recorded
+                    timestamp = datetime.fromtimestamp(os.path.getmtime(item_path))
+                    file_timestamps[item_path] = timestamp
+                
+                # If older than 1 hour, mark for removal
+                if current_time - timestamp > timedelta(hours=1):
+                    expired_items.append(item_path)
+        
+        # Second pass: remove expired items
+        for item_path in expired_items:
+            try:
+                shutil.rmtree(item_path)
+                # Remove from timestamps dictionary
+                if item_path in file_timestamps:
+                    del file_timestamps[item_path]
+                print(f"Removed old temp directory: {item_path}")
+            except Exception as e:
+                print(f"Error removing directory {item_path}: {e}")
     except Exception as e:
         print(f"Error in cleanup task: {e}")
 
@@ -393,8 +418,9 @@ async def download_endpoint(data: str):
         raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")
 
 
+# Optimization 10: Asynchronous FFmpeg Processing
 async def create_slideshow(images: List[str], audio_path: str, output_path: str):
-    """Create a slideshow video from images and audio using FFmpeg"""
+    """Create a slideshow video from images and audio using FFmpeg asynchronously"""
     import subprocess
     
     # Prepare FFmpeg command
@@ -445,23 +471,36 @@ async def create_slideshow(images: List[str], audio_path: str, output_path: str)
         output_path
     ])
     
-    # Execute the command
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+    # Use event loop's executor to run FFmpeg command asynchronously
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,  # Uses the default executor
+        _run_ffmpeg_process,
+        cmd, output_path
     )
     
-    stdout, stderr = await process.communicate()
+    return output_path
+
+def _run_ffmpeg_process(cmd, output_path):
+    """Run FFmpeg process synchronously - to be used with run_in_executor"""
+    import subprocess
+    
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    stdout, stderr = process.communicate()
     
     if process.returncode != 0:
         raise Exception(f"FFmpeg error: {stderr.decode()}")
     
     return output_path
 
+# Optimization 3: Concurrent Processing
 @app.get("/download-slideshow")
 async def download_slideshow_endpoint(url: str, background_tasks: BackgroundTasks):
-    """Create and download a slideshow from TikTok photo post"""
+    """Create and download a slideshow from TikTok photo post with concurrent processing"""
     if not url:
         raise HTTPException(status_code=400, detail="URL parameter is required")
     
@@ -493,14 +532,21 @@ async def download_slideshow_endpoint(url: str, background_tasks: BackgroundTask
             temp_dir = os.path.join(TEMP_DIR, folder_name)
             os.makedirs(temp_dir, exist_ok=True)
             
-            # Download images
+            # Track creation time for temp directory cleanup
+            file_timestamps[temp_dir] = datetime.now()
+            
+            # Download images concurrently
             image_urls = data["image_data"]["no_watermark_image_list"]
             image_paths = []
+            download_tasks = []
             
             for i, image_url in enumerate(image_urls):
                 image_path = os.path.join(temp_dir, f"image_{i}.jpg")
-                await download_file(image_url, image_path)
                 image_paths.append(image_path)
+                download_tasks.append(download_file(image_url, image_path))
+            
+            # Use asyncio.gather to download all images concurrently
+            await asyncio.gather(*download_tasks)
             
             # Download audio
             # Use helper function to safely get audio URL
@@ -532,5 +578,15 @@ async def download_slideshow_endpoint(url: str, background_tasks: BackgroundTask
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating slideshow: {str(e)}")
 
+    
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=3029, reload=True)
+    # Optimization 7: Use uvloop for better performance
+    uvloop.install()
+    uvicorn.run(
+        "main:app", 
+        host="0.0.0.0", 
+        port=3029, 
+        reload=False,
+        access_log=False,  # Nonaktifkan access log
+        log_level="warning"  # Set log level ke paling minimal
+    )
