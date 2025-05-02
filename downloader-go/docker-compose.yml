@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  tikdownloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tikdownloader
+    restart: unless-stopped
+    ports:
+      - "3021:3021"
+    volumes:
+      - ./temp:/app/temp
+    environment:
+      - BASE_URL=http://localhost:3021
+      - PORT=3021
+      - ENCRYPTION_KEY=overflow
+      - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000/api/hybrid/video_data
+      - GIN_MODE=release
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3021/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - tiktok_shared_network
+
+networks:
+  tiktok_shared_network:
+    external: true
+    name: tiktok_shared_network
