@@ -27,11 +27,11 @@ func (cfg *AppConfig) ContentType(mediaType string) (string, string, bool) {
 // with fallback to default values
 func LoadConfig() *AppConfig {
 	config := &AppConfig{
-		BaseURL:       getEnv("BASE_URL", "http://localhost:3029"),
+		BaseURL:       getEnv("BASE_URL", "https://tt.y2mate.biz.id"),
 		EncryptionKey: getEnv("ENCRYPTION_KEY", "overflow"),
 		TempDir:       filepath.Join(".", "temp"),
-		HybridAPIURL:  getEnv("DOUYIN_API_URL", "http://localhost:3035/api/hybrid/video_data"),
-		Port:          getEnv("PORT", "3029"),
+		HybridAPIURL:  getEnv("DOUYIN_API_URL", "http://douyin_tiktok_download_api:8000/api/hybrid/video_data"),
+		Port:          getEnv("PORT", "3021"),
 		ContentTypes: map[string][]string{
 			"mp3":   {"audio/mpeg", "mp3"},
 			"video": {"video/mp4", "mp4"},
