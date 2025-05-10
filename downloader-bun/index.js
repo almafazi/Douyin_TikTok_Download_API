@@ -346,7 +346,8 @@ app.get('/download', async (req, res) => {
 
 // Slideshow download endpoint
 app.get('/download-slideshow', async (req, res) => {
- 
+    let workDir = '';
+
     try {
       const { url } = req.query;
       
@@ -377,7 +378,7 @@ app.get('/download-slideshow', async (req, res) => {
       const awemeId = videoData.aweme_id || 'unknown';
       const authorUid = videoData.author?.uid || 'unknown';
       const folderName = `${awemeId}_${authorUid}_${Date.now()}`;
-      const workDir = path.join(tempDir, folderName);
+      workDir = path.join(tempDir, folderName);
       
       await fs.ensureDir(workDir);
       
