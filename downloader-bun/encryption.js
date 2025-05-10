@@ -1,38 +1,53 @@
-// Import library crypto-js
-import CryptoJS from "crypto-js";
+// Import Cryptr
+import Cryptr from 'cryptr';
 
 // Fungsi untuk encrypt
-export function encrypt(text, key, ttlInSeconds) {// Tambahkan timestamp (waktu saat ini) ke dalam teks
+export function encrypt(text, key, ttlInSeconds) {
+    // Inisialisasi Cryptr dengan key
+    const cryptr = new Cryptr(key);
+    
+    // Tambahkan timestamp (waktu saat ini) dan TTL ke dalam teks
     const timestamp = Date.now();
     const textWithTimestamp = `${timestamp}_*_${ttlInSeconds}_*_${text}`;
 
-    // Enkripsi menggunakan AES dengan key yang diberikan
-    const encrypted = CryptoJS.AES.encrypt(textWithTimestamp, key).toString();
-    // Encode hasil enkripsi ke Base64 agar aman untuk URL
-    return encodeURIComponent(CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(encrypted)));
+    // Enkripsi menggunakan Cryptr
+    const encrypted = cryptr.encrypt(textWithTimestamp);
+    
+    // Encode hasil enkripsi ke URL-safe format
+    return encodeURIComponent(encrypted);
 }
 
 // Fungsi untuk decrypt
 export function decrypt(encryptedText, key) {
+    // Inisialisasi Cryptr dengan key
+    const cryptr = new Cryptr(key);
+    
+    try {
+        // Decode dari URL-safe format
+        const decoded = decodeURIComponent(encryptedText);
+        
+        // Dekripsi menggunakan Cryptr
+        const decryptedWithTimestamp = cryptr.decrypt(decoded);
 
-    // Decode dari Base64
-    const decoded = CryptoJS.enc.Base64.parse(decodeURIComponent(encryptedText)).toString(CryptoJS.enc.Utf8);
-    // Dekripsi menggunakan AES dengan key yang diberikan
-    const decryptedWithTimestamp = CryptoJS.AES.decrypt(decoded, key).toString(CryptoJS.enc.Utf8);
+        // Pisahkan timestamp, TTL, dan teks asli
+        const [timestamp, ttlInSeconds, text] = decryptedWithTimestamp.split("_*_");
 
-    // Pisahkan timestamp, TTL, dan teks asli
-    const [timestamp, ttlInSeconds, text] = decryptedWithTimestamp.split("_*_");
+        // Hitung waktu kedaluwarsa
+        const expirationTime = parseInt(timestamp) + parseInt(ttlInSeconds) * 1000; // Konversi ke milidetik
+        const currentTime = Date.now();
 
-    // Hitung waktu kedaluwarsa
-    const expirationTime = parseInt(timestamp) + parseInt(ttlInSeconds) * 1000; // Konversi ke milidetik
-    const currentTime = Date.now();
+        // Periksa apakah data sudah kedaluwarsa
+        if (currentTime > expirationTime) {
+            throw new Error("Link expired and cannot be decrypted.");
+        }
 
-    // Periksa apakah data sudah kedaluwarsa
-    if (currentTime > expirationTime) {
-        throw new Error("Link expired and cannot be decrypted.");
-
+        // Jika belum kedaluwarsa, kembalikan teks asli
+        return text;
+    } catch (error) {
+        if (error.message === "Link expired and cannot be decrypted.") {
+            throw error;
+        } else {
+            throw new Error("Failed to decrypt data: " + error.message);
+        }
     }
-
-    // Jika belum kedaluwarsa, kembalikan teks asli
-    return text;
 }
