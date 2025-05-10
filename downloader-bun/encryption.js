@@ -9,7 +9,7 @@
  * @param {number} ttlInSeconds - Time to live in seconds
  * @returns {string} - URL-safe encrypted string
  */
-function encrypt(text, key, ttlInSeconds) {
+export function encrypt(text, key, ttlInSeconds) {
     // Create payload with timestamp and TTL
     const timestamp = Date.now();
     const payload = JSON.stringify({
@@ -31,7 +31,7 @@ function encrypt(text, key, ttlInSeconds) {
    * @param {string} key - Encryption key
    * @returns {string} - Original text if not expired
    */
-  function decrypt(encryptedText, key) {
+  export function decrypt(encryptedText, key) {
     try {
       // Convert from URL-safe Base64
       const encrypted = fromUrlSafeBase64(encryptedText);
@@ -102,4 +102,4 @@ function encrypt(text, key, ttlInSeconds) {
   }
   
   // Export functions
-  module.exports = { encrypt, decrypt };
+//   module.exports = { encrypt, decrypt };
