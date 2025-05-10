@@ -1,105 +1,38 @@
-/**
- * Simple XOR encryption utility with expiration functionality
- */
+// Import library crypto-js
+import CryptoJS from "crypto-js";
 
-/**
- * Encrypts text using XOR with expiration functionality
- * @param {string} text - Text to encrypt
- * @param {string} key - Encryption key
- * @param {number} ttlInSeconds - Time to live in seconds
- * @returns {string} - URL-safe encrypted string
- */
-export function encrypt(text, key, ttlInSeconds) {
-    // Create payload with timestamp and TTL
+// Fungsi untuk encrypt
+export function encrypt(text, key, ttlInSeconds) {// Tambahkan timestamp (waktu saat ini) ke dalam teks
     const timestamp = Date.now();
-    const payload = JSON.stringify({
-      timestamp,
-      ttl: ttlInSeconds,
-      data: text
-    });
-    
-    // Perform XOR encryption
-    const encrypted = xorEncrypt(payload, key);
-    
-    // Convert to URL-safe Base64
-    return toUrlSafeBase64(encrypted);
-  }
-  
-  /**
-   * Decrypts text and validates expiration
-   * @param {string} encryptedText - Text to decrypt
-   * @param {string} key - Encryption key
-   * @returns {string} - Original text if not expired
-   */
-  export function decrypt(encryptedText, key) {
-    try {
-      // Convert from URL-safe Base64
-      const encrypted = fromUrlSafeBase64(encryptedText);
-      
-      // Decrypt with XOR
-      const decrypted = xorEncrypt(encrypted, key); // XOR is its own inverse
-      
-      // Parse the payload
-      const payload = JSON.parse(decrypted);
-      
-      // Check expiration
-      const expirationTime = payload.timestamp + (payload.ttl * 1000);
-      if (Date.now() > expirationTime) {
+    const textWithTimestamp = `${timestamp}_*_${ttlInSeconds}_*_${text}`;
+
+    // Enkripsi menggunakan AES dengan key yang diberikan
+    const encrypted = CryptoJS.AES.encrypt(textWithTimestamp, key).toString();
+    // Encode hasil enkripsi ke Base64 agar aman untuk URL
+    return encodeURIComponent(CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(encrypted)));
+}
+
+// Fungsi untuk decrypt
+export function decrypt(encryptedText, key) {
+
+    // Decode dari Base64
+    const decoded = CryptoJS.enc.Base64.parse(decodeURIComponent(encryptedText)).toString(CryptoJS.enc.Utf8);
+    // Dekripsi menggunakan AES dengan key yang diberikan
+    const decryptedWithTimestamp = CryptoJS.AES.decrypt(decoded, key).toString(CryptoJS.enc.Utf8);
+
+    // Pisahkan timestamp, TTL, dan teks asli
+    const [timestamp, ttlInSeconds, text] = decryptedWithTimestamp.split("_*_");
+
+    // Hitung waktu kedaluwarsa
+    const expirationTime = parseInt(timestamp) + parseInt(ttlInSeconds) * 1000; // Konversi ke milidetik
+    const currentTime = Date.now();
+
+    // Periksa apakah data sudah kedaluwarsa
+    if (currentTime > expirationTime) {
         throw new Error("Link expired and cannot be decrypted.");
-      }
-      
-      // Return the original data
-      return payload.data;
-    } catch (error) {
-      throw new Error("Decryption failed: " + error.message);
+
     }
-  }
-  
-  /**
-   * XOR encryption/decryption function
-   * @param {string} text - Text to encrypt/decrypt
-   * @param {string} key - Encryption key
-   * @returns {string} - Result of XOR operation
-   */
-  function xorEncrypt(text, key) {
-    let result = '';
-    for (let i = 0; i < text.length; i++) {
-      // XOR each character with the corresponding character in the key
-      const charCode = text.charCodeAt(i) ^ key.charCodeAt(i % key.length);
-      result += String.fromCharCode(charCode);
-    }
-    return result;
-  }
-  
-  /**
-   * Convert string to URL-safe Base64
-   * @param {string} str - String to encode
-   * @returns {string} - URL-safe Base64 string
-   */
-  function toUrlSafeBase64(str) {
-    // Convert to Base64
-    const base64 = btoa(str);
-    // Make URL-safe
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
-  
-  /**
-   * Convert URL-safe Base64 to string
-   * @param {string} base64 - URL-safe Base64 string
-   * @returns {string} - Decoded string
-   */
-  function fromUrlSafeBase64(base64) {
-    // Restore standard Base64
-    const standardBase64 = base64.replace(/-/g, '+').replace(/_/g, '/');
-    // Add padding if needed
-    const padding = standardBase64.length % 4;
-    const paddedBase64 = padding ? 
-      standardBase64 + '='.repeat(4 - padding) : 
-      standardBase64;
-    
-    // Decode Base64
-    return atob(paddedBase64);
-  }
-  
-  // Export functions
-//   module.exports = { encrypt, decrypt };
+
+    // Jika belum kedaluwarsa, kembalikan teks asli
+    return text;
+}
