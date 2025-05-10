@@ -346,8 +346,7 @@ app.get('/download', async (req, res) => {
 
 // Slideshow download endpoint
 app.get('/download-slideshow', async (req, res) => {
-    let workDir = '';
-    
+ 
     try {
       const { url } = req.query;
       
@@ -378,7 +377,7 @@ app.get('/download-slideshow', async (req, res) => {
       const awemeId = videoData.aweme_id || 'unknown';
       const authorUid = videoData.author?.uid || 'unknown';
       const folderName = `${awemeId}_${authorUid}_${Date.now()}`;
-      workDir = path.join(tempDir, folderName);
+      const workDir = path.join(tempDir, folderName);
       
       await fs.ensureDir(workDir);
       
@@ -469,7 +468,7 @@ app.get('/download-slideshow', async (req, res) => {
       }
       return res.status(500).json({ error: error.message || 'An error occurred creating the slideshow' });
     }
-  });
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
