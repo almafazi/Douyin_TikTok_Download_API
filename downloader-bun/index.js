@@ -177,7 +177,7 @@ async function fetchTikTokData(url, minimal = true) {
     return response.data;
   } catch (error) {
     console.error('Error fetching TikTok data:', error.message);
-    throw new Error(`Failed to fetch data: ${error.message}`);
+    throw new Error(`Failed to fetch data: ${error.message} ${url}`);
   }
 }
 
