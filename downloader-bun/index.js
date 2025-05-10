@@ -166,7 +166,7 @@ async function fetchTikTokData(url, minimal = true) {
     const apiURL = `${DOUYIN_API_URL}?url=${encodeURIComponent(url)}&minimal=${minimal ? 'true' : 'false'}`;
     
     const response = await axios.get(apiURL, {
-      timeout: 30000 // 30 seconds timeout
+      timeout: 120000 // 30 seconds timeout
     });
     
     if (response.status !== 200) {
