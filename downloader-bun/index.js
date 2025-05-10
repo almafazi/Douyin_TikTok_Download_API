@@ -8,13 +8,14 @@ import { dirname } from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import { cleanupFolder, initCleanupSchedule } from './cleanup.js';
-
+import dotenv from 'dotenv';
 import { 
   encrypt, 
   decrypt,
 } from './encryption.js';
 import { createReadStream } from 'fs';
 
+dotenv.config();
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
 initCleanupSchedule('0 * * * *');
