@@ -17,7 +17,7 @@ import { createReadStream } from 'fs';
 dotenv.config();
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
-initCleanupSchedule('0 * * * *');
+initCleanupSchedule('*/15 * * * *');
 // Environment variables (normally in .env file)
 const PORT = process.env.PORT || 3021;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3021';
