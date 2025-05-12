@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs-extra';
 import path from 'path';
-import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import ffmpeg from 'fluent-ffmpeg';
@@ -55,19 +54,22 @@ const contentTypes = {
 };
 
 async function downloadFile(url, outputPath) {
-  const response = await axios({
-    method: 'GET',
-    url: url,
-    responseType: 'stream'
-  });
+  const response = await fetch(url);
   
-  const writer = fs.createWriteStream(outputPath);
+  if (!response.ok) {
+    throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+  }
   
-  response.data.pipe(writer);
+  const fileStream = fs.createWriteStream(outputPath);
+  const body = await response.arrayBuffer();
+  const buffer = Buffer.from(body);
+  
+  fileStream.write(buffer);
   
   return new Promise((resolve, reject) => {
-    writer.on('finish', resolve);
-    writer.on('error', reject);
+    fileStream.on('finish', resolve);
+    fileStream.on('error', reject);
+    fileStream.end();
   });
 }
 
@@ -127,15 +129,12 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
 // Stream a file from a URL to the response
 async function streamDownload(url, res, contentType, encodedFilename) {
   try {
-    // Stream the file from source to client
-    const response = await axios({
-      method: 'GET',
-      url: url,
-      responseType: 'stream',
-      timeout: 60000 // 60 seconds timeout
+    // Fetch the file from source
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(120000) // 120 seconds (2 minutes) timeout
     });
     
-    if (response.status !== 200) {
+    if (!response.ok) {
       throw new Error(`Source returned error: ${response.status}`);
     }
     
@@ -145,7 +144,8 @@ async function streamDownload(url, res, contentType, encodedFilename) {
     res.setHeader('x-filename', encodedFilename);
     
     // Stream the file to the client
-    response.data.pipe(res);
+    const body = await response.arrayBuffer();
+    res.send(Buffer.from(body));
   } catch (error) {
     console.error('Error in streamDownload:', error);
     
@@ -166,15 +166,20 @@ async function fetchTikTokData(url, minimal = true) {
   try {
     const apiURL = `${DOUYIN_API_URL}?url=${encodeURIComponent(url)}&minimal=${minimal ? 'true' : 'false'}`;
     
-    const response = await axios.get(apiURL, {
-      timeout: 120000 // 30 seconds timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds (2 minutes) timeout
+    
+    const response = await fetch(apiURL, {
+      signal: controller.signal
     });
     
-    if (response.status !== 200) {
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
       throw new Error(`External API returned error: ${response.status}`);
     }
     
-    return response.data;
+    return await response.json();
   } catch (error) {
     console.error('Error fetching TikTok data:', error.message);
     throw new Error(`Failed to fetch data: ${error.message} ${url}`);
