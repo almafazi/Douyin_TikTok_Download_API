@@ -5,10 +5,10 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "6068:6068"
+      - "6075:6075"
     environment:
-      - PORT=6068
-      - BASE_URL=http://localhost:6068  # Change this to your actual public URL in production
+      - PORT=6075
+      - BASE_URL=https://tt.y2mate.biz.id  # Change this to your actual public URL in production
       - ENCRYPTION_KEY=overflow  # Change this to a secure key
       - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000/api/hybrid/video_data  # Update this as needed
     volumes:

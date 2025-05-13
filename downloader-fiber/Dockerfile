@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache gcc musl-dev
@@ -13,7 +13,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code
-COPY *.go ./
+COPY . .
 
 # Build application
 RUN CGO_ENABLED=1 GOOS=linux go build -o downloader
@@ -34,7 +34,7 @@ COPY --from=builder /app/downloader .
 RUN mkdir -p temp && chmod 777 temp
 
 # Expose the port
-EXPOSE 6068
+EXPOSE 6075
 
 # Run the application
 CMD ["/app/downloader"]

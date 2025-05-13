@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"

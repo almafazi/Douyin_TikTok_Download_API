@@ -17,7 +17,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/joho/godotenv"
-	"github.com/robfig/cron/v3"
 )
 
 // Environment variables
@@ -50,7 +49,7 @@ type TikTokResponse struct {
 	DownloadLink     map[string]any      `json:"download_link"`
 	MusicDuration    int                 `json:"music_duration"`
 	Author           Author              `json:"author"`
-	SlideshowLink    string              `json:"download_slideshow_link,omitempty"`
+	DownloadSlideshowLink string `json:"download_slideshow_link,omitempty"` // Renamed from SlideshowLink
 }
 
 type PhotoItem struct {
@@ -136,7 +135,7 @@ func loadEnv() {
 	godotenv.Load()
 
 	// Set variables with defaults
-	PORT = getEnv("PORT", "6068")
+	PORT = getEnv("PORT", "6075")
 	BASE_URL = getEnv("BASE_URL", "http://localhost:"+PORT)
 	ENCRYPTION_KEY = getEnv("ENCRYPTION_KEY", "overflow")
 	DOUYIN_API_URL = getEnv("DOUYIN_API_URL", "http://127.0.0.1:3035/api/hybrid/video_data")
@@ -204,15 +203,9 @@ func handleDownload(c *fiber.Ctx) error {
 	}
 
 	// Decrypt the data
-	decryptedData, err := decrypt(encryptedData, ENCRYPTION_KEY)
+	downloadData, err := DecryptDownloadData(encryptedData, ENCRYPTION_KEY)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Failed to decrypt data: "+err.Error())
-	}
-
-	// Parse download data
-	var downloadData DownloadData
-	if err := json.Unmarshal([]byte(decryptedData), &downloadData); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid decrypted data format")
 	}
 
 	// Validate download data
@@ -404,29 +397,44 @@ func handleSlideshow(c *fiber.Ctx) error {
 
 // Stream a file from a URL to the response
 func streamDownload(url string, c *fiber.Ctx, contentType, encodedFilename string) error {
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 120 * time.Second,
-	}
+    // Create HTTP client with timeout
+    client := &http.Client{
+        Timeout: 120 * time.Second,
+    }
 
-	// Fetch the file from source
-	resp, err := client.Get(url)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to download from source: "+err.Error())
-	}
-	defer resp.Body.Close()
+    // Log the request
+    log.Printf("Starting download from: %s", url)
 
-	if resp.StatusCode != http.StatusOK {
-		return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("Source returned error: %d", resp.StatusCode))
-	}
+    // Fetch the file from source
+    resp, err := client.Get(url)
+    if err != nil {
+        log.Printf("Download error: %v", err)
+        return fiber.NewError(fiber.StatusInternalServerError, "Failed to download from source: "+err.Error())
+    }
+    defer resp.Body.Close()
 
-	// Set headers
-	c.Set("Content-Type", contentType)
-	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, encodedFilename, encodedFilename))
-	c.Set("x-filename", encodedFilename)
+    if resp.StatusCode != http.StatusOK {
+        log.Printf("Source returned status: %d", resp.StatusCode)
+        return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("Source returned error: %d", resp.StatusCode))
+    }
 
-	// Copy the response body to the client
-	return c.SendStream(resp.Body)
+    // Log response headers and size
+    log.Printf("Download response received, Content-Length: %s", resp.Header.Get("Content-Length"))
+
+    // Set headers
+    c.Set("Content-Type", contentType)
+    c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, encodedFilename, encodedFilename))
+    c.Set("x-filename", encodedFilename)
+
+    // Copy the response body to the client
+    _, copyErr := io.Copy(c, resp.Body)
+    if copyErr != nil {
+        log.Printf("Error streaming response: %v", copyErr)
+        return copyErr
+    }
+
+    log.Printf("Download completed successfully")
+    return nil
 }
 
 // Download a file from URL to local path
@@ -494,8 +502,8 @@ func fetchTikTokData(urlStr string, minimal bool) (map[string]interface{}, error
 	return result, nil
 }
 
-// Generate JSON response
-func generateJsonResponse(data map[string]interface{}, url string) (TikTokResponse, error) {
+// generateJsonResponse mengubah data API menjadi format respons yang konsisten dengan Node.js
+func generateJsonResponse(data map[string]interface{}, urlStr string) (TikTokResponse, error) {
 	// Initialize default response
 	response := TikTokResponse{
 		DownloadLink: make(map[string]any),
@@ -543,7 +551,7 @@ func generateJsonResponse(data map[string]interface{}, url string) (TikTokRespon
 	author := Author{
 		Nickname:  getStringValue(authorData, "nickname"),
 		Signature: getStringValue(authorData, "signature"),
-		Avatar:    "",
+		Avatar:    "", // Default empty string
 	}
 
 	// Get avatar URL
@@ -611,17 +619,29 @@ func generateJsonResponse(data map[string]interface{}, url string) (TikTokRespon
 
 				// Generate MP3 download link
 				if musicURL != "" {
-					encryptedMusicData, err := encrypt(fmt.Sprintf(`{"url":"%s","author":"%s","type":"mp3"}`, musicURL, author.Nickname), ENCRYPTION_KEY, 360)
+					data := DownloadData{
+						URL:    musicURL,
+						Author: author.Nickname,
+						Type:   "mp3",
+					}
+					
+					encryptedMusicData, err := EncryptDownloadData(data, ENCRYPTION_KEY, 360)
 					if err == nil {
 						response.DownloadLink["mp3"] = fmt.Sprintf("%s/download?data=%s", BASE_URL, encryptedMusicData)
 					}
 				}
 
-				// Generate image download links
+				// Generate image download links and store as "no_watermark" array
 				var noWatermarkLinks []string
 				for _, imageURL := range nwmImageList {
 					if url, ok := imageURL.(string); ok {
-						encryptedImageData, err := encrypt(fmt.Sprintf(`{"url":"%s","author":"%s","type":"image"}`, url, author.Nickname), ENCRYPTION_KEY, 360)
+						data := DownloadData{
+							URL:    url,
+							Author: author.Nickname,
+							Type:   "image",
+						}
+						
+						encryptedImageData, err := EncryptDownloadData(data, ENCRYPTION_KEY, 360)
 						if err == nil {
 							noWatermarkLinks = append(noWatermarkLinks, fmt.Sprintf("%s/download?data=%s", BASE_URL, encryptedImageData))
 						}
@@ -633,9 +653,9 @@ func generateJsonResponse(data map[string]interface{}, url string) (TikTokRespon
 				}
 
 				// Add slideshow download link
-				encryptedSlideshowURL, err := encrypt(url, ENCRYPTION_KEY, 360)
+				encryptedSlideshowURL, err := encrypt(urlStr, ENCRYPTION_KEY, 360)
 				if err == nil {
-					response.SlideshowLink = fmt.Sprintf("%s/download-slideshow?url=%s", BASE_URL, encryptedSlideshowURL)
+					response.DownloadSlideshowLink = fmt.Sprintf("%s/download-slideshow?url=%s", BASE_URL, encryptedSlideshowURL)
 				}
 			}
 		}
@@ -645,27 +665,46 @@ func generateJsonResponse(data map[string]interface{}, url string) (TikTokRespon
 		// Get video URLs
 		videoURLs, ok := videoData["video_data"].(map[string]interface{})
 		if ok {
-			// Generate download links
-			generateDownloadLink := func(urlKey, linkType string) {
-				if url, ok := videoURLs[urlKey].(string); ok && url != "" {
-					encryptedData, err := encrypt(fmt.Sprintf(`{"url":"%s","author":"%s","type":"%s"}`, url, author.Nickname, linkType), ENCRYPTION_KEY, 360)
+			// Helper function to generate download links
+			addDownloadLink := func(sourceKey, targetKey, linkType string) {
+				if url, ok := videoURLs[sourceKey].(string); ok && url != "" {
+					data := DownloadData{
+						URL:    url,
+						Author: author.Nickname,
+						Type:   linkType,
+					}
+					
+					encryptedData, err := EncryptDownloadData(data, ENCRYPTION_KEY, 360)
 					if err == nil {
-						response.DownloadLink[urlKey] = fmt.Sprintf("%s/download?data=%s", BASE_URL, encryptedData)
+						response.DownloadLink[targetKey] = fmt.Sprintf("%s/download?data=%s", BASE_URL, encryptedData)
 					}
 				}
 			}
 
-			// Generate video download links
-			generateDownloadLink("wm_video_url", "video")
-			generateDownloadLink("wm_video_url_HQ", "video")
-			generateDownloadLink("nwm_video_url", "video")
-			generateDownloadLink("nwm_video_url_HQ", "video")
+			// Generate video download links with Node.js compatible keys
+			addDownloadLink("wm_video_url", "watermark", "video")
+			addDownloadLink("wm_video_url_HQ", "watermark_hd", "video")
+			addDownloadLink("nwm_video_url", "no_watermark", "video")
+			addDownloadLink("nwm_video_url_HQ", "no_watermark_hd", "video")
 
 			// Generate MP3 download link
 			if musicURL != "" {
-				encryptedMusicData, err := encrypt(fmt.Sprintf(`{"url":"%s","author":"%s","type":"mp3"}`, musicURL, author.Nickname), ENCRYPTION_KEY, 360)
+				data := DownloadData{
+					URL:    musicURL,
+					Author: author.Nickname,
+					Type:   "mp3",
+				}
+				
+				encryptedMusicData, err := EncryptDownloadData(data, ENCRYPTION_KEY, 360)
 				if err == nil {
 					response.DownloadLink["mp3"] = fmt.Sprintf("%s/download?data=%s", BASE_URL, encryptedMusicData)
+				}
+			}
+			
+			// Hapus nilai null/nil dari map download_link untuk konsistensi dengan Node.js
+			for key, value := range response.DownloadLink {
+				if value == nil {
+					delete(response.DownloadLink, key)
 				}
 			}
 		}

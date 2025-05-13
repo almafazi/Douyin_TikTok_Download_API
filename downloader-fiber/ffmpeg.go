@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -66,7 +65,7 @@ func createSlideshow(imagePaths []string, audioPath, outputPath string) error {
 	
 	// Get command as string for logging
 	cmdStr := fmt.Sprintf("ffmpeg %s", strings.Join(args, " "))
-	log.Printf("Running FFmpeg command: %s", cmdStr)
+	// log.Printf("Running FFmpeg command: %s", cmdStr)
 	
 	// Run command
 	output, err := cmd.CombinedOutput()

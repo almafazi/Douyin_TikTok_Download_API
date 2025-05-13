@@ -1,10 +1,11 @@
-module tiktok-downloader
+module github.com/almafazi/Douyin_TikTok_Download_API
 
-go 1.21
+go 1.23.5
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.0
 	github.com/joho/godotenv v1.5.1
+	github.com/namdevel/go-crypt v0.0.0-20230111165724-bd9253eb95d9
 	github.com/robfig/cron/v3 v3.0.1
 )
 

@@ -6,140 +6,147 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"net/url"
-	"strconv"
-	"strings"
 	"time"
 )
 
-// encrypt encrypts text with key and adds TTL
-func encrypt(text, key string, ttlInSeconds int) (string, error) {
-	// Create timestamp
-	timestamp := time.Now().UnixNano() / int64(time.Millisecond)
-	
-	// Combine timestamp, TTL, and text
-	textWithTimestamp := fmt.Sprintf("%d_*_%d_*_%s", timestamp, ttlInSeconds, text)
-	
-	// Create cipher
-	block, err := createCipher(key)
-	if err != nil {
-		return "", err
-	}
-	
-	// Encrypt
-	ciphertext, err := encryptWithAES(block, []byte(textWithTimestamp))
-	if err != nil {
-		return "", err
-	}
-	
-	// Encode to base64 and then URL encode
-	encoded := base64.StdEncoding.EncodeToString(ciphertext)
-	return url.QueryEscape(encoded), nil
+// Prepare a 32-byte key using SHA-256
+func deriveKey(key string) []byte {
+	hash := sha256.Sum256([]byte(key))
+	return hash[:]
 }
 
-// decrypt decrypts text with key and verifies TTL
-func decrypt(encryptedText, key string) (string, error) {
-	// URL decode and then decode base64
-	decoded, err := url.QueryUnescape(encryptedText)
+// Encrypt data with TTL using AES-GCM (simpler and more secure)
+func encrypt(plaintext, key string, ttlInSeconds int) (string, error) {
+	// Add timestamp and TTL to the data
+	data := struct {
+		Text      string `json:"t"`
+		Timestamp int64  `json:"ts"`
+		TTL       int    `json:"ttl"`
+	}{
+		Text:      plaintext,
+		Timestamp: time.Now().Unix(),
+		TTL:       ttlInSeconds,
+	}
+	
+	// Convert to JSON
+	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return "", err
 	}
 	
-	ciphertext, err := base64.StdEncoding.DecodeString(decoded)
+	// Derive key
+	keyBytes := deriveKey(key)
+	
+	// Create cipher block
+	block, err := aes.NewCipher(keyBytes)
 	if err != nil {
 		return "", err
 	}
 	
-	// Create cipher
-	block, err := createCipher(key)
-	if err != nil {
-		return "", err
-	}
-	
-	// Decrypt
-	decrypted, err := decryptWithAES(block, ciphertext)
-	if err != nil {
-		return "", err
-	}
-	
-	// Split into timestamp, TTL, and text
-	parts := strings.SplitN(string(decrypted), "_*_", 3)
-	if len(parts) != 3 {
-		return "", errors.New("invalid decrypted format")
-	}
-	
-	// Parse timestamp and TTL
-	timestamp, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return "", err
-	}
-	
-	ttlInSeconds, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return "", err
-	}
-	
-	// Calculate expiration time
-	expirationTime := timestamp + (ttlInSeconds * 1000) // Convert to milliseconds
-	currentTime := time.Now().UnixNano() / int64(time.Millisecond)
-	
-	// Check if expired
-	if currentTime > expirationTime {
-		return "", errors.New("link expired and cannot be decrypted")
-	}
-	
-	// Return the original text
-	return parts[2], nil
-}
-
-// createCipher creates an AES cipher from a key
-func createCipher(key string) (cipher.Block, error) {
-	// Create a 32-byte key using SHA-256
-	hasher := sha256.New()
-	hasher.Write([]byte(key))
-	hashedKey := hasher.Sum(nil)
-	
-	// Create the AES cipher
-	return aes.NewCipher(hashedKey)
-}
-
-// encryptWithAES encrypts plaintext with AES-GCM
-func encryptWithAES(block cipher.Block, plaintext []byte) ([]byte, error) {
-	// Create GCM
+	// Create GCM cipher mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	
 	// Create nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
+		return "", err
 	}
 	
-	// Encrypt and seal
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-	return ciphertext, nil
+	// Encrypt
+	ciphertext := gcm.Seal(nonce, nonce, jsonData, nil)
+	
+	// Convert to URL-safe base64
+	return base64.RawURLEncoding.EncodeToString(ciphertext), nil
 }
 
-// decryptWithAES decrypts ciphertext with AES-GCM
-func decryptWithAES(block cipher.Block, ciphertext []byte) ([]byte, error) {
-	// Create GCM
+// Decrypt data and check TTL
+func decrypt(encryptedText, key string) (string, error) {
+	// Decode URL-safe base64
+	ciphertext, err := base64.RawURLEncoding.DecodeString(encryptedText)
+	if err != nil {
+		return "", err
+	}
+	
+	// Derive key
+	keyBytes := deriveKey(key)
+	
+	// Create cipher block
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return "", err
+	}
+	
+	// Create GCM cipher mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	
 	// Extract nonce
 	if len(ciphertext) < gcm.NonceSize() {
-		return nil, errors.New("ciphertext too short")
+		return "", errors.New("ciphertext too short")
 	}
-	
 	nonce, ciphertext := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
 	
 	// Decrypt
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	jsonData, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+	
+	// Parse JSON
+	var data struct {
+		Text      string `json:"t"`
+		Timestamp int64  `json:"ts"`
+		TTL       int    `json:"ttl"`
+	}
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return "", err
+	}
+	
+	// Check TTL
+	currentTime := time.Now().Unix()
+	expirationTime := data.Timestamp + int64(data.TTL)
+	if currentTime > expirationTime {
+		return "", errors.New("link expired")
+	}
+	
+	return data.Text, nil
+}
+
+// EncryptDownloadData encrypts a DownloadData struct
+func EncryptDownloadData(data DownloadData, key string, ttlInSeconds int) (string, error) {
+	// Convert struct to JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return "", err
+	}
+	
+	// Encrypt the JSON string
+	return encrypt(string(jsonData), key, ttlInSeconds)
+}
+
+// DecryptDownloadData decrypts to a DownloadData struct
+func DecryptDownloadData(encryptedText, key string) (DownloadData, error) {
+	var data DownloadData
+	
+	// Decrypt the string
+	decrypted, err := decrypt(encryptedText, key)
+	if err != nil {
+		return data, err
+	}
+	
+	// Convert JSON to struct
+	err = json.Unmarshal([]byte(decrypted), &data)
+	if err != nil {
+		return data, err
+	}
+	
+	return data, nil
 }
