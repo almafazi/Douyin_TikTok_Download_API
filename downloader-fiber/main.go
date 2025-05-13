@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,18 +13,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
 // Environment variables
 var (
-	PORT          string
-	BASE_URL      string
+	PORT           string
+	BASE_URL       string
 	ENCRYPTION_KEY string
 	DOUYIN_API_URL string
-	TEMP_DIR      string
+	TEMP_DIR       string
 )
 
 // ContentType mapping
@@ -37,19 +36,19 @@ var contentTypes = map[string][]string{
 
 // Response structures
 type TikTokResponse struct {
-	Status           string              `json:"status"`
-	Photos           []PhotoItem         `json:"photos,omitempty"`
-	Title            string              `json:"title"`
-	Description      string              `json:"description"`
-	Statistics       Statistics          `json:"statistics"`
-	Artist           string              `json:"artist"`
-	Cover            string              `json:"cover"`
-	Duration         int                 `json:"duration"`
-	Audio            string              `json:"audio"`
-	DownloadLink     map[string]any      `json:"download_link"`
-	MusicDuration    int                 `json:"music_duration"`
-	Author           Author              `json:"author"`
-	DownloadSlideshowLink string `json:"download_slideshow_link,omitempty"` // Renamed from SlideshowLink
+	Status               string         `json:"status"`
+	Photos               []PhotoItem    `json:"photos,omitempty"`
+	Title                string         `json:"title"`
+	Description          string         `json:"description"`
+	Statistics           Statistics     `json:"statistics"`
+	Artist               string         `json:"artist"`
+	Cover                string         `json:"cover"`
+	Duration             int            `json:"duration"`
+	Audio                string         `json:"audio"`
+	DownloadLink         map[string]any `json:"download_link"`
+	MusicDuration        int            `json:"music_duration"`
+	Author               Author         `json:"author"`
+	DownloadSlideshowLink string         `json:"download_slideshow_link,omitempty"`
 }
 
 type PhotoItem struct {
@@ -76,6 +75,11 @@ type DownloadData struct {
 	Type   string `json:"type"`
 }
 
+// Request structures
+type TikTokRequest struct {
+	URL string `json:"url" binding:"required"`
+}
+
 // Main function
 func main() {
 	// Load environment variables
@@ -87,38 +91,31 @@ func main() {
 	// Start cleanup scheduler
 	initCleanupSchedule("*/15 * * * *")
 
-	// Create Fiber app
-	app := fiber.New(fiber.Config{
-		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			code := fiber.StatusInternalServerError
-			if e, ok := err.(*fiber.Error); ok {
-				code = e.Code
-			}
-			return c.Status(code).JSON(fiber.Map{
-				"error": err.Error(),
-			})
-		},
-	})
+	// Set Gin to release mode in production
+	gin.SetMode(gin.ReleaseMode)
 
-	// Middleware
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,OPTIONS",
-		AllowHeaders: "Origin,Content-Type,Content-Length,Accept-Encoding,Authorization",
-		ExposeHeaders: "Content-Disposition,X-Filename",
+	// Create Gin router
+	router := gin.Default()
+
+	// Configure CORS
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "Authorization"},
+		ExposeHeaders:    []string{"Content-Disposition", "X-Filename"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
 	}))
 
 	// Routes
-	app.Post("/tiktok", handleTikTok)
-	app.Get("/download", handleDownload)
-	app.Get("/download-slideshow", handleSlideshow)
-	app.Get("/health", handleHealth)
+	router.POST("/tiktok", handleTikTok)
+	router.GET("/download", handleDownload)
+	router.GET("/download-slideshow", handleSlideshow)
+	router.GET("/health", handleHealth)
 
 	// 404 handler
-	app.Use(func(c *fiber.Ctx) error {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "Route not found",
-		})
+	router.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Route not found"})
 	})
 
 	// Start server
@@ -126,7 +123,7 @@ func main() {
 	log.Printf("Base URL: %s", BASE_URL)
 	log.Printf("Temp directory: %s", TEMP_DIR)
 	log.Printf("Hybrid API URL: %s", DOUYIN_API_URL)
-	log.Fatal(app.Listen(":" + PORT))
+	log.Fatal(router.Run(":" + PORT))
 }
 
 // Load environment variables
@@ -151,72 +148,78 @@ func getEnv(key, fallback string) string {
 }
 
 // Health check handler
-func handleHealth(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
+func handleHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),
 	})
 }
 
 // TikTok data processing handler
-func handleTikTok(c *fiber.Ctx) error {
+func handleTikTok(c *gin.Context) {
 	// Parse request body
-	var req struct {
-		URL string `json:"url"`
-	}
-
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	var req TikTokRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
 	}
 
 	// Validate URL
 	if req.URL == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "URL parameter is required")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "URL parameter is required"})
+		return
 	}
 
 	// Check if URL is from TikTok or Douyin
 	if !strings.Contains(req.URL, "tiktok.com") && !strings.Contains(req.URL, "douyin.com") {
-		return fiber.NewError(fiber.StatusBadRequest, "Only TikTok and Douyin URLs are supported")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only TikTok and Douyin URLs are supported"})
+		return
 	}
 
 	// Fetch data from hybrid API
 	data, err := fetchTikTokData(req.URL, true)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Process response
 	response, err := generateJsonResponse(data, req.URL)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
-	return c.JSON(response)
+	c.JSON(http.StatusOK, response)
 }
 
 // Download handler
-func handleDownload(c *fiber.Ctx) error {
+func handleDownload(c *gin.Context) {
 	// Get encrypted data from query
 	encryptedData := c.Query("data")
 	if encryptedData == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "Encrypted data parameter is required")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Encrypted data parameter is required"})
+		return
 	}
 
 	// Decrypt the data
 	downloadData, err := DecryptDownloadData(encryptedData, ENCRYPTION_KEY)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Failed to decrypt data: "+err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to decrypt data: " + err.Error()})
+		return
 	}
 
 	// Validate download data
 	if downloadData.URL == "" || downloadData.Author == "" || downloadData.Type == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid decrypted data: missing url, author, or type")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid decrypted data: missing url, author, or type"})
+		return
 	}
 
 	// Determine content type and file extension
 	contentTypeInfo, exists := contentTypes[downloadData.Type]
 	if !exists {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid file type specified")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file type specified"})
+		return
 	}
 
 	contentType, fileExtension := contentTypeInfo[0], contentTypeInfo[1]
@@ -226,41 +229,46 @@ func handleDownload(c *fiber.Ctx) error {
 	encodedFilename := url.QueryEscape(filename)
 
 	// Stream the file
-	return streamDownload(downloadData.URL, c, contentType, encodedFilename)
+	streamDownload(downloadData.URL, c, contentType, encodedFilename)
 }
 
 // Slideshow download handler
-func handleSlideshow(c *fiber.Ctx) error {
+func handleSlideshow(c *gin.Context) {
 	var workDir string
 
 	// Get encrypted URL from query
 	encryptedURL := c.Query("url")
 	if encryptedURL == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "URL parameter is required")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "URL parameter is required"})
+		return
 	}
 
 	// Decrypt the URL
 	decryptedURL, err := decrypt(encryptedURL, ENCRYPTION_KEY)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Failed to decrypt URL: "+err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to decrypt URL: " + err.Error()})
+		return
 	}
 
 	// Fetch data from hybrid API
 	data, err := fetchTikTokData(decryptedURL, true)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Extract video data from response
 	videoData, ok := data["data"].(map[string]interface{})
 	if !ok {
-		return fiber.NewError(fiber.StatusInternalServerError, "Invalid response from API")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid response from API"})
+		return
 	}
 
 	// Check if it's an image post
 	isImage := videoData["type"] == "image"
 	if !isImage {
-		return fiber.NewError(fiber.StatusBadRequest, "Only image posts are supported")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only image posts are supported"})
+		return
 	}
 
 	// Create unique temp directory
@@ -291,12 +299,14 @@ func handleSlideshow(c *fiber.Ctx) error {
 	// Get image URLs
 	imageData, ok := videoData["image_data"].(map[string]interface{})
 	if !ok {
-		return fiber.NewError(fiber.StatusInternalServerError, "No image data found")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No image data found"})
+		return
 	}
 
 	imageURLs, ok := imageData["no_watermark_image_list"].([]interface{})
 	if !ok || len(imageURLs) == 0 {
-		return fiber.NewError(fiber.StatusInternalServerError, "No images found")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No images found"})
+		return
 	}
 
 	// Download images
@@ -309,13 +319,15 @@ func handleSlideshow(c *fiber.Ctx) error {
 
 		imagePath := filepath.Join(workDir, fmt.Sprintf("image_%d.jpg", i))
 		if err := downloadFile(imgURLStr, imagePath); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Failed to download image: "+err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to download image: " + err.Error()})
+			return
 		}
 		imagePaths = append(imagePaths, imagePath)
 	}
 
 	if len(imagePaths) == 0 {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to download any images")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to download any images"})
+		return
 	}
 
 	// Get audio URL
@@ -335,19 +347,22 @@ func handleSlideshow(c *fiber.Ctx) error {
 	}
 
 	if audioURL == "" {
-		return fiber.NewError(fiber.StatusInternalServerError, "Could not find audio URL")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not find audio URL"})
+		return
 	}
 
 	// Download audio
 	audioPath := filepath.Join(workDir, "audio.mp3")
 	if err := downloadFile(audioURL, audioPath); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to download audio: "+err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to download audio: " + err.Error()})
+		return
 	}
 
 	// Create slideshow
 	outputPath := filepath.Join(workDir, "slideshow.mp4")
 	if err := createSlideshow(imagePaths, audioPath, outputPath); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create slideshow: "+err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create slideshow: " + err.Error()})
+		return
 	}
 
 	// Generate filename
@@ -368,73 +383,89 @@ func handleSlideshow(c *fiber.Ctx) error {
 
 	filename := fmt.Sprintf("%s_%d.mp4", sanitized, time.Now().UnixNano())
 
-	// Track when the response finishes
-	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		defer cleanupFolder(workDir)
-
-		file, err := os.Open(outputPath)
-		if err != nil {
-			log.Printf("Error opening file: %v", err)
-			return
-		}
-		defer file.Close()
-
-		// Copy the file to the response
-		if _, err := io.Copy(w, file); err != nil {
-			log.Printf("Error streaming file: %v", err)
-			return
-		}
-	})
-
-	// Set headers
-	c.Set("Content-Type", "video/mp4")
-	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	// Prepare to stream the file
+	c.Header("Content-Type", "video/mp4")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	
-	return nil
+	// Open the file
+	file, err := os.Open(outputPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open slideshow file"})
+		return
+	}
+	defer file.Close()
+	
+	// Get file stats for content length
+	fileInfo, err := file.Stat()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file info"})
+		return
+	}
+	
+	// Use DataFromReader to stream the file
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.DataFromReader(http.StatusOK, fileInfo.Size(), "video/mp4", file, nil)
+	
+	// Clean up the temp directory after streaming
+	go func() {
+		cleanupFolder(workDir)
+	}()
 }
 
 // Helper functions
 
 // Stream a file from a URL to the response
-func streamDownload(url string, c *fiber.Ctx, contentType, encodedFilename string) error {
-    // Create HTTP client with timeout
-    client := &http.Client{
-        Timeout: 120 * time.Second,
-    }
+func streamDownload(url string, c *gin.Context, contentType, encodedFilename string) {
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 120 * time.Second,
+	}
 
-    // Log the request
-    log.Printf("Starting download from: %s", url)
+	// Log the request
+	log.Printf("Starting download from: %s", url)
 
-    // Fetch the file from source
-    resp, err := client.Get(url)
-    if err != nil {
-        log.Printf("Download error: %v", err)
-        return fiber.NewError(fiber.StatusInternalServerError, "Failed to download from source: "+err.Error())
-    }
-    defer resp.Body.Close()
+	// Create a request so we can modify headers
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Printf("Failed to create request: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request: " + err.Error()})
+		return
+	}
 
-    if resp.StatusCode != http.StatusOK {
-        log.Printf("Source returned status: %d", resp.StatusCode)
-        return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("Source returned error: %d", resp.StatusCode))
-    }
+	// Add standard headers to appear as a browser
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Connection", "keep-alive")
 
-    // Log response headers and size
-    log.Printf("Download response received, Content-Length: %s", resp.Header.Get("Content-Length"))
+	// Send the request
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Download error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to download from source: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
 
-    // Set headers
-    c.Set("Content-Type", contentType)
-    c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, encodedFilename, encodedFilename))
-    c.Set("x-filename", encodedFilename)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Source returned status: %d", resp.StatusCode)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Source returned error: %d", resp.StatusCode)})
+		return
+	}
 
-    // Copy the response body to the client
-    _, copyErr := io.Copy(c, resp.Body)
-    if copyErr != nil {
-        log.Printf("Error streaming response: %v", copyErr)
-        return copyErr
-    }
+	// Log response headers and size
+	contentLength := resp.ContentLength
+	log.Printf("Download response received, Content-Length: %d", contentLength)
 
-    log.Printf("Download completed successfully")
-    return nil
+	// Set additional headers
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, encodedFilename, encodedFilename))
+	c.Header("x-filename", encodedFilename)
+
+	// Use DataFromReader to stream the content directly to the client
+	// This handles setting content-length and content-type automatically
+	c.DataFromReader(http.StatusOK, contentLength, contentType, resp.Body, nil)
+
+	log.Printf("Download completed successfully")
 }
 
 // Download a file from URL to local path
@@ -502,7 +533,7 @@ func fetchTikTokData(urlStr string, minimal bool) (map[string]interface{}, error
 	return result, nil
 }
 
-// generateJsonResponse mengubah data API menjadi format respons yang konsisten dengan Node.js
+// generateJsonResponse processes API data into a consistent format
 func generateJsonResponse(data map[string]interface{}, urlStr string) (TikTokResponse, error) {
 	// Initialize default response
 	response := TikTokResponse{
@@ -701,7 +732,7 @@ func generateJsonResponse(data map[string]interface{}, urlStr string) (TikTokRes
 				}
 			}
 			
-			// Hapus nilai null/nil dari map download_link untuk konsistensi dengan Node.js
+			// Remove nil values from download_link map for consistency with Node.js
 			for key, value := range response.DownloadLink {
 				if value == nil {
 					delete(response.DownloadLink, key)
