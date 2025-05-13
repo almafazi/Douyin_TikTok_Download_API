@@ -64,7 +64,7 @@ func createSlideshow(imagePaths []string, audioPath, outputPath string) error {
 	cmd := exec.Command("ffmpeg", args...)
 	
 	// Get command as string for logging
-	cmdStr := fmt.Sprintf("ffmpeg %s", strings.Join(args, " "))
+	//cmdStr := fmt.Sprintf("ffmpeg %s", strings.Join(args, " "))
 	// log.Printf("Running FFmpeg command: %s", cmdStr)
 	
 	// Run command
