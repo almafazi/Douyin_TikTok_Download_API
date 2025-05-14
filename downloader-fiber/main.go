@@ -15,7 +15,8 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
+	"github.com/joho/godotenv"	
+	"github.com/subosito/gozaru"
 )
 
 // Environment variables
@@ -226,7 +227,7 @@ func handleDownload(c *gin.Context) {
 
 	// Configure the filename
 	filename := fmt.Sprintf("%s.%s", downloadData.Author, fileExtension)
-	encodedFilename := url.QueryEscape(filename)
+	encodedFilename := gozaru.Sanitize(filename)
 
 	// Stream the file
 	streamDownload(downloadData.URL, c, contentType, encodedFilename)
