@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM oven/bun:latest
 
 # Install dependencies for ffmpeg
 RUN apt-get update && apt-get install -y \
@@ -8,11 +8,11 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copy package.json
 COPY package.json ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies using Bun
+RUN bun install --frozen-lockfile --production
 
 # Copy application code
 COPY . .
@@ -23,5 +23,5 @@ RUN mkdir -p temp && chmod 777 temp
 # Expose the port the app runs on
 EXPOSE 6068
 
-# Start the application
-CMD ["node", "index.js"]
+# Start the application with Bun
+CMD ["bun", "run", "index.js"]
