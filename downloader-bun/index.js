@@ -13,10 +13,11 @@ import {
   decrypt,
 } from './encryption.js';
 import { createReadStream } from 'fs';
+import got from 'got';
 
 dotenv.config();
 // Set ffmpeg path
-ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfmpegPath('ffmpeg');
 initCleanupSchedule('*/15 * * * *');
 // Environment variables (normally in .env file)
 const PORT = process.env.PORT || 3021;
@@ -42,7 +43,7 @@ app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Origin', 'Content-Type', 'Content-Length', 'Accept-Encoding', 'Authorization'],
-  exposedHeaders: ['Content-Disposition', 'X-Filename']
+  exposedHeaders: ['Content-Disposition', 'X-Filename', 'Content-Length']
 }));
 app.use(express.json());
 
@@ -54,23 +55,38 @@ const contentTypes = {
 };
 
 async function downloadFile(url, outputPath) {
-  const response = await fetch(url);
-  
-  if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+  try {
+    const writeStream = fs.createWriteStream(outputPath);
+    
+    await new Promise((resolve, reject) => {
+      const downloadStream = got.stream(url, {
+        timeout: {
+          request: 120000 // 120 seconds timeout
+        },
+        retry: {
+          limit: 2
+        }
+      });
+      
+      downloadStream.pipe(writeStream);
+      
+      downloadStream.on('error', (error) => {
+        reject(error);
+      });
+      
+      writeStream.on('finish', () => {
+        resolve();
+      });
+      
+      writeStream.on('error', (error) => {
+        reject(error);
+      });
+    });
+    
+    return outputPath;
+  } catch (error) {
+    throw new Error(`Failed to download file: ${error.message}`);
   }
-  
-  const fileStream = fs.createWriteStream(outputPath);
-  const body = await response.arrayBuffer();
-  const buffer = Buffer.from(body);
-  
-  fileStream.write(buffer);
-  
-  return new Promise((resolve, reject) => {
-    fileStream.on('finish', resolve);
-    fileStream.on('error', reject);
-    fileStream.end();
-  });
 }
 
 // Create a slideshow from images and audio
@@ -78,42 +94,42 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
   return new Promise((resolve, reject) => {
     const command = ffmpeg();
     
-    // Add each image as input (sama seperti fungsi pertama)
+    // Add each image as input
     imagePaths.forEach(imagePath => {
       command.input(imagePath).inputOptions(['-loop 1', '-t 4']);
     });
     
-    // Add audio with loop (sama seperti fungsi pertama)
+    // Add audio with loop
     command.input(audioPath).inputOptions(['-stream_loop -1']);
     
     // Build complex filter for scaling and concatenating images
     const filter = [];
     
-    // Scale and pad each image (sama seperti fungsi pertama)
+    // Scale and pad each image
     imagePaths.forEach((_, index) => {
       filter.push(`[${index}:v]scale=w=1080:h=1920:force_original_aspect_ratio=decrease,` +
         `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v${index}]`);
     });
     
-    // Concatenate all scaled/padded video streams (sama seperti fungsi pertama)
+    // Concatenate all scaled/padded video streams
     const concatInputs = imagePaths.map((_, i) => `[v${i}]`).join('');
     filter.push(`${concatInputs}concat=n=${imagePaths.length}:v=1:a=0[vout]`);
     
-    // Calculate total duration (sama seperti fungsi pertama)
+    // Calculate total duration
     const videoDuration = imagePaths.length * 4;
     
-    // Add audio filter to trim the looping audio to the video duration (sama seperti fungsi pertama)
+    // Add audio filter to trim the looping audio to the video duration
     filter.push(`[${imagePaths.length}:a]atrim=0:${videoDuration}[aout]`);
     
-      command
-        .complexFilter(filter)
-        .outputOptions([
-            '-map', '[vout]',
-            '-map', '[aout]',
-            '-pix_fmt', 'yuv420p',
-            '-fps_mode', 'cfr'  // Gunakan -fps_mode cfr alih-alih -preset medium
-          ])
-          .videoCodec('libx264')
+    command
+      .complexFilter(filter)
+      .outputOptions([
+        '-map', '[vout]',
+        '-map', '[aout]',
+        '-pix_fmt', 'yuv420p',
+        '-fps_mode', 'cfr'  // Use -fps_mode cfr instead of -preset medium
+      ])
+      .videoCodec('libx264')
       .output(outputPath)
       .on('error', (err) => {
         reject(new Error(`FFmpeg error: ${err.message}`));
@@ -129,23 +145,46 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
 // Stream a file from a URL to the response
 async function streamDownload(url, res, contentType, encodedFilename) {
   try {
-    // Fetch the file from source
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(120000) // 120 seconds (2 minutes) timeout
+    // Create download stream with a single request
+    const downloadStream = got.stream(url, {
+      timeout: {
+        request: 120000 // 120 seconds timeout
+      },
+      retry: {
+        limit: 2
+      }
     });
     
-    if (!response.ok) {
-      throw new Error(`Source returned error: ${response.status}`);
-    }
-    
-    // Set headers
+    // Set initial headers
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`);
-    res.setHeader('x-filename', encodedFilename);
+    res.setHeader('X-Filename', encodedFilename);
     
-    // Stream the file to the client
-    const body = await response.arrayBuffer();
-    res.send(Buffer.from(body));
+    // When the response headers are received, set the Content-Length
+    downloadStream.on('response', (response) => {
+      const contentLength = response.headers['content-length'];
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+    });
+    
+    // Handle errors
+    downloadStream.on('error', (error) => {
+      console.error('Error streaming file:', error);
+      
+      // If headers haven't been sent yet, send error response
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: error.message || 'Failed to download from source'
+        });
+      } else {
+        // If headers have been sent, end the response
+        res.end();
+      }
+    });
+    
+    // Pipe the stream to the response
+    downloadStream.pipe(res);
   } catch (error) {
     console.error('Error in streamDownload:', error);
     
@@ -166,20 +205,17 @@ async function fetchTikTokData(url, minimal = true) {
   try {
     const apiURL = `${DOUYIN_API_URL}?url=${encodeURIComponent(url)}&minimal=${minimal ? 'true' : 'false'}`;
     
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds (2 minutes) timeout
-    
-    const response = await fetch(apiURL, {
-      signal: controller.signal
+    const response = await got(apiURL, {
+      timeout: {
+        request: 120000 // 120 seconds timeout
+      },
+      retry: {
+        limit: 2
+      },
+      responseType: 'json'
     });
     
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      throw new Error(`External API returned error: ${response.status}`);
-    }
-    
-    return await response.json();
+    return response.body;
   } catch (error) {
     console.error('Error fetching TikTok data:', error.message);
     throw new Error(`Failed to fetch data: ${error.message} ${url}`);
@@ -429,11 +465,16 @@ app.get('/download-slideshow', async (req, res) => {
         const sanitized = authorNickname.replace(/[^a-zA-Z0-9]/g, '_');
         const filename = `${sanitized}_${Date.now()}.mp4`;
         
-        // Return the file using a stream to track when download finishes
-        const fileStream = createReadStream(outputPath);
+        // Get file size to set content-length header
+        const stats = await fs.stat(outputPath);
         
+        // Set headers
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', stats.size);
+        
+        // Return the file using a stream to track when download finishes
+        const fileStream = createReadStream(outputPath);
         
         // Track when the stream ends or errors
         fileStream.on('end', () => {
