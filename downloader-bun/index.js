@@ -126,7 +126,7 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
         '-map', '[vout]',
         '-map', '[aout]',
         '-pix_fmt', 'yuv420p',
-        '-fps_mode', 'cfr'  // Use -fps_mode cfr instead of -preset medium
+        // '-fps_mode', 'cfr'  // Use -fps_mode cfr instead of -preset medium
       ])
       .videoCodec('libx264')
       .output(outputPath)
