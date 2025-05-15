@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import ffmpeg from 'fluent-ffmpeg';
+import ffmpegStatic from 'ffmpeg-static';
 import { cleanupFolder, initCleanupSchedule } from './cleanup.js';
 import dotenv from 'dotenv';
 import { 
@@ -16,7 +17,7 @@ import got from 'got';
 
 dotenv.config();
 // Set ffmpeg path
-ffmpeg.setFfmpegPath('ffmpeg');
+ffmpeg.setFfmpegPath(ffmpegStatic);
 initCleanupSchedule('*/15 * * * *');
 // Environment variables (normally in .env file)
 const PORT = process.env.PORT || 3021;
@@ -126,7 +127,7 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
         '-map', '[vout]',
         '-map', '[aout]',
         '-pix_fmt', 'yuv420p',
-        // '-fps_mode', 'cfr'  // Use -fps_mode cfr instead of -preset medium
+        '-fps_mode', 'cfr'  // Use -fps_mode cfr instead of -preset medium
       ])
       .videoCodec('libx264')
       .output(outputPath)
