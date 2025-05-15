@@ -388,134 +388,173 @@ app.get('/download', async (req, res) => {
 
 // Slideshow download endpoint
 app.get('/download-slideshow', async (req, res) => {
-    let workDir = '';
+  let workDir = '';
 
+  try {
+    const { url } = req.query;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'URL parameter is required' });
+    }
+    
+    // Decrypt the URL
+    const decryptedURL = decrypt(url, ENCRYPTION_KEY);
+    
+    // Fetch data from the hybrid API
+    const data = await fetchTikTokData(decryptedURL, true);
+    
+    if (!data || !data.data) {
+      return res.status(500).json({ error: 'Invalid response from API' });
+    }
+    
+    const videoData = data.data;
+    
+    // Check if it's an image post
+    const isImage = videoData.type === 'image';
+    
+    if (!isImage) {
+      return res.status(400).json({ error: 'Only image posts are supported' });
+    }
+    
+    // Create a unique temp directory
+    const awemeId = videoData.aweme_id || 'unknown';
+    const authorUid = videoData.author?.uid || 'unknown';
+    const folderName = `${awemeId}_${authorUid}_${Date.now()}`;
+    workDir = path.join(tempDir, folderName);
+    
+    await fs.ensureDir(workDir);
+    
     try {
-      const { url } = req.query;
+      // Get image URLs
+      const imageURLs = videoData.image_data?.no_watermark_image_list || [];
       
-      if (!url) {
-        return res.status(400).json({ error: 'URL parameter is required' });
+      if (imageURLs.length === 0) {
+        throw new Error('No images found');
       }
       
-      // Decrypt the URL
-      const decryptedURL = decrypt(url, ENCRYPTION_KEY);
-      
-      // Fetch data from the hybrid API
-      const data = await fetchTikTokData(decryptedURL, true);
-      
-      if (!data || !data.data) {
-        return res.status(500).json({ error: 'Invalid response from API' });
+      // Get audio URL
+      let audioURL = '';
+      if (videoData.music && videoData.music.play_url) {
+        audioURL = videoData.music.play_url.url_list?.[0] || videoData.music.play_url.url || '';
       }
       
-      const videoData = data.data;
-      
-      // Check if it's an image post
-      const isImage = videoData.type === 'image';
-      
-      if (!isImage) {
-        return res.status(400).json({ error: 'Only image posts are supported' });
+      if (!audioURL) {
+        throw new Error('Could not find audio URL');
       }
       
-      // Create a unique temp directory
-      const awemeId = videoData.aweme_id || 'unknown';
-      const authorUid = videoData.author?.uid || 'unknown';
-      const folderName = `${awemeId}_${authorUid}_${Date.now()}`;
-      workDir = path.join(tempDir, folderName);
+      // Parallel download function that returns the local file path
+      const downloadToPath = async (url, filePath) => {
+        try {
+          const writeStream = fs.createWriteStream(filePath);
+          
+          await new Promise((resolve, reject) => {
+            const downloadStream = got.stream(url, {
+              timeout: {
+                request: 120000 // 120 seconds timeout
+              },
+              retry: {
+                limit: 2
+              }
+            });
+            
+            downloadStream.pipe(writeStream);
+            
+            downloadStream.on('error', (error) => {
+              reject(error);
+            });
+            
+            writeStream.on('finish', () => {
+              resolve();
+            });
+            
+            writeStream.on('error', (error) => {
+              reject(error);
+            });
+          });
+          
+          return filePath;
+        } catch (error) {
+          throw new Error(`Failed to download file (${url}): ${error.message}`);
+        }
+      };
       
-      await fs.ensureDir(workDir);
+      // Prepare all download tasks
+      const audioPath = path.join(workDir, 'audio.mp3');
+      const audioTask = downloadToPath(audioURL, audioPath);
       
-      try {
-        // Get image URLs
-        const imageURLs = videoData.image_data?.no_watermark_image_list || [];
-        
-        if (imageURLs.length === 0) {
-          throw new Error('No images found');
-        }
-        
-        // Download images
-        const imagePaths = [];
-        for (let i = 0; i < imageURLs.length; i++) {
-          const imagePath = path.join(workDir, `image_${i}.jpg`);
-          await downloadFile(imageURLs[i], imagePath);
-          imagePaths.push(imagePath);
-        }
-        
-        // Get audio URL
-        let audioURL = '';
-        if (videoData.music && videoData.music.play_url) {
-          audioURL = videoData.music.play_url.url_list?.[0] || videoData.music.play_url.url || '';
-        }
-        
-        if (!audioURL) {
-          throw new Error('Could not find audio URL');
-        }
-        
-        // Download audio
-        const audioPath = path.join(workDir, 'audio.mp3');
-        await downloadFile(audioURL, audioPath);
-        
-        // Create slideshow
-        const outputPath = path.join(workDir, 'slideshow.mp4');
-        await createSlideshow(imagePaths, audioPath, outputPath);
-        
-        // Generate filename
-        const authorNickname = videoData.author?.nickname || 'unknown';
-        
-        // Sanitize filename
-        const sanitized = authorNickname.replace(/[^a-zA-Z0-9]/g, '_');
-        const filename = `${sanitized}_${Date.now()}.mp4`;
-        
-        // Get file size to set content-length header
-        const stats = await fs.stat(outputPath);
-        
-        // Set headers
-        res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Length', stats.size);
-        
-        // Return the file using a stream to track when download finishes
-        const fileStream = createReadStream(outputPath);
-        
-        // Track when the stream ends or errors
-        fileStream.on('end', () => {
-          console.log('File stream ended, cleaning up folder');
-          // Cleanup after download completes
+      const imageDownloadTasks = imageURLs.map((imageUrl, index) => {
+        const imagePath = path.join(workDir, `image_${index}.jpg`);
+        return downloadToPath(imageUrl, imagePath);
+      });
+      
+      // Execute all downloads in parallel
+      const [imagePaths] = await Promise.all([
+        Promise.all(imageDownloadTasks),
+        audioTask
+      ]);
+      
+      // Create slideshow
+      const outputPath = path.join(workDir, 'slideshow.mp4');
+      await createSlideshow(imagePaths, audioPath, outputPath);
+      
+      // Generate filename
+      const authorNickname = videoData.author?.nickname || 'unknown';
+      
+      // Sanitize filename
+      const sanitized = authorNickname.replace(/[^a-zA-Z0-9]/g, '_');
+      const filename = `${sanitized}_${Date.now()}.mp4`;
+      
+      // Get file size to set content-length header
+      const stats = await fs.stat(outputPath);
+      
+      // Set headers
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', stats.size);
+      
+      // Return the file using a stream to track when download finishes
+      const fileStream = createReadStream(outputPath);
+      
+      // Track when the stream ends or errors
+      fileStream.on('end', () => {
+        console.log('File stream ended, cleaning up folder');
+        // Cleanup after download completes
+        cleanupFolder(workDir);
+      });
+      
+      fileStream.on('error', (error) => {
+        console.error('Error streaming file:', error);
+        // Cleanup on streaming error
+        cleanupFolder(workDir);
+      });
+      
+      // Handle client disconnection
+      res.on('close', () => {
+        if (!res.writableEnded) {
+          console.log('Client disconnected before download completed, cleaning up');
           cleanupFolder(workDir);
-        });
-        
-        fileStream.on('error', (error) => {
-          console.error('Error streaming file:', error);
-          // Cleanup on streaming error
-          cleanupFolder(workDir);
-        });
-        
-        // Handle client disconnection
-        res.on('close', () => {
-          if (!res.writableEnded) {
-            console.log('Client disconnected before download completed, cleaning up');
-            cleanupFolder(workDir);
-          }
-        });
-        
-        // Pipe the file to the response
-        fileStream.pipe(res);
-        
-      } catch (error) {
-        console.error('Error processing slideshow:', error);
-        // Cleanup on error
-        if (workDir) {
-          await cleanupFolder(workDir);
         }
-        throw error;
-      }
+      });
+      
+      // Pipe the file to the response
+      fileStream.pipe(res);
+      
     } catch (error) {
-      console.error('Error in slideshow handler:', error);
-      // Cleanup on error if not already done
+      console.error('Error processing slideshow:', error);
+      // Cleanup on error
       if (workDir) {
         await cleanupFolder(workDir);
       }
-      return res.status(500).json({ error: error.message || 'An error occurred creating the slideshow' });
+      throw error;
     }
+  } catch (error) {
+    console.error('Error in slideshow handler:', error);
+    // Cleanup on error if not already done
+    if (workDir) {
+      await cleanupFolder(workDir);
+    }
+    return res.status(500).json({ error: error.message || 'An error occurred creating the slideshow' });
+  }
 });
 
 // Health check endpoint
