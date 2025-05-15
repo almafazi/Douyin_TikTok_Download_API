@@ -5,7 +5,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import ffmpeg from 'fluent-ffmpeg';
-import ffmpegStatic from 'ffmpeg-static';
 import { cleanupFolder, initCleanupSchedule } from './cleanup.js';
 import dotenv from 'dotenv';
 import { 
