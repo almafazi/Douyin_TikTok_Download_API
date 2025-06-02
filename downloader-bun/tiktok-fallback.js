@@ -7,6 +7,8 @@ class TikTokFallbackDownloader {
         this.apiEndpoint = '/api/';
         // this.proxy = options.proxy || 'http://ztgvzxrb-rotate:8tmkgjfb6k44@p.webshare.io:80/';
         this.timeout = options.timeout || 30000;
+        this.maxRetries = options.maxRetries || 2;
+        this.retryDelay = options.retryDelay || 1000; // 1 second
         
         // Setup axios instance with proxy
         this.client = axios.create({
@@ -26,33 +28,75 @@ class TikTokFallbackDownloader {
     }
 
     /**
-     * Fetch TikTok data in the same format as your DOUYIN_API
+     * Sleep utility function for delays
+     * @param {number} ms - Milliseconds to sleep
+     * @returns {Promise}
+     */
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Check if error is a rate limit error
+     * @param {Object} data - Response data
+     * @returns {boolean}
+     */
+    isRateLimitError(data) {
+        return data.code !== 0 && data.msg && data.msg.startsWith('Free Api Limit');
+    }
+
+    /**
+     * Fetch TikTok data with retry logic
      * @param {string} url - TikTok video URL
      * @param {boolean} minimal - Minimal response (not used but kept for compatibility)
      * @returns {Promise<Object>} Video data in DOUYIN_API format
      */
     async fetchTikTokData(url, minimal = true) {
-        try {
-            const encodedUrl = encodeURIComponent(url);
-            
-            const formData = new URLSearchParams();
-            formData.append('url', encodedUrl);
-            formData.append('count', '12');
-            formData.append('cursor', '0');
-            formData.append('web', '1');
-            formData.append('hd', '1');
+        let lastError;
+        
+        for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+            try {
+                const encodedUrl = encodeURIComponent(url);
+                
+                const formData = new URLSearchParams();
+                formData.append('url', encodedUrl);
+                formData.append('count', '12');
+                formData.append('cursor', '0');
+                formData.append('web', '1');
+                formData.append('hd', '1');
 
-            const response = await this.client.post(this.apiEndpoint, formData);
-            
-            if (response.data.code === 0) {
-                return this.convertToDouyinFormat(response.data);
-            } else {
-                throw new Error(response.data.msg || 'Failed to fetch video data');
+                const response = await this.client.post(this.apiEndpoint, formData);
+                
+                if (response.data.code === 0) {
+                    return this.convertToDouyinFormat(response.data);
+                } else {
+                    // Check if it's a rate limit error and we have retries left
+                    if (this.isRateLimitError(response.data) && attempt < this.maxRetries) {
+                        console.warn(`Rate limit hit on attempt ${attempt + 1}/${this.maxRetries + 1}. Retrying after ${this.retryDelay}ms...`);
+                        await this.sleep(this.retryDelay);
+                        lastError = new Error(response.data.msg || 'Rate limit exceeded');
+                        continue;
+                    } else {
+                        throw new Error(response.data.msg || 'Failed to fetch video data');
+                    }
+                }
+            } catch (error) {
+                lastError = error;
+                
+                // If it's a network error or other non-API error, check if we should retry
+                if (attempt < this.maxRetries && !error.response) {
+                    console.warn(`Network error on attempt ${attempt + 1}/${this.maxRetries + 1}. Retrying after ${this.retryDelay}ms...`);
+                    await this.sleep(this.retryDelay);
+                    continue;
+                }
+                
+                // If we've exhausted retries or it's not a retryable error, break
+                break;
             }
-        } catch (error) {
-            console.error('TikTok Fallback Error:', error.message);
-            throw new Error(`Fallback API failed: ${error.message}`);
         }
+        
+        console.error('TikTok Fallback Error:', lastError.message);
+        throw new Error(`Fallback API failed after ${this.maxRetries + 1} attempts: ${lastError.message}`);
     }
 
     /**
