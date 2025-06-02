@@ -14,16 +14,25 @@ import {
 } from './encryption.js';
 import { createReadStream } from 'fs';
 import got from 'got';
+// Import the fallback library
+import TikTokFallbackDownloader from './tiktok-fallback.js';
 
 dotenv.config();
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
 initCleanupSchedule('*/15 * * * *');
+
 // Environment variables (normally in .env file)
 const PORT = process.env.PORT || 3021;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3021';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow';
 const DOUYIN_API_URL = process.env.DOUYIN_API_URL || 'http://127.0.0.1:3035/api/hybrid/video_data';
+
+// Initialize fallback downloader
+const fallbackDownloader = new TikTokFallbackDownloader({
+    proxy: process.env.TIKWM_PROXY || 'http://ztgvzxrb-rotate:8tmkgjfb6k44@p.webshare.io:80/',
+    timeout: 30000
+});
 
 // Initialize Express app
 const app = express();
@@ -127,7 +136,7 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
         '-map', '[vout]',
         '-map', '[aout]',
         '-pix_fmt', 'yuv420p',
-        '-fps_mode', 'cfr'  // Use -fps_mode cfr instead of -preset medium
+        '-fps_mode', 'cfr'
       ])
       .videoCodec('libx264')
       .output(outputPath)
@@ -145,22 +154,19 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
 // Stream a file from a URL to the response
 async function streamDownload(url, res, contentType, encodedFilename) {
   try {
-    // Create download stream with a single request
     const downloadStream = got.stream(url, {
       timeout: {
-        request: 120000 // 120 seconds timeout
+        request: 120000
       },
       retry: {
         limit: 2
       }
     });
     
-    // Set initial headers
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`);
     res.setHeader('X-Filename', encodedFilename);
     
-    // When the response headers are received, set the Content-Length
     downloadStream.on('response', (response) => {
       const contentLength = response.headers['content-length'];
       if (contentLength) {
@@ -168,57 +174,67 @@ async function streamDownload(url, res, contentType, encodedFilename) {
       }
     });
     
-    // Handle errors
     downloadStream.on('error', (error) => {
       console.error('Error streaming file:', error);
       
-      // If headers haven't been sent yet, send error response
       if (!res.headersSent) {
         res.status(500).json({
           error: error.message || 'Failed to download from source'
         });
       } else {
-        // If headers have been sent, end the response
         res.end();
       }
     });
     
-    // Pipe the stream to the response
     downloadStream.pipe(res);
   } catch (error) {
     console.error('Error in streamDownload:', error);
     
-    // If headers haven't been sent yet, send error response
     if (!res.headersSent) {
       res.status(500).json({
         error: error.message || 'Failed to download from source'
       });
     } else {
-      // If headers have been sent, end the response
       res.end();
     }
   }
 }
 
-// Fetch TikTok data from the hybrid API
+// Modified fetchTikTokData with fallback support
 async function fetchTikTokData(url, minimal = true) {
   try {
+    // Try primary API first
     const apiURL = `${DOUYIN_API_URL}?url=${encodeURIComponent(url)}&minimal=${minimal ? 'true' : 'false'}`;
     
     const response = await got(apiURL, {
       timeout: {
-        request: 120000 // 120 seconds timeout
+        request: 5000 // 120 seconds timeout
       },
-      retry: {
-        limit: 2
-      },
+      // retry: {
+      //   limit: 2
+      // },
       responseType: 'json'
     });
     
+    // console.log('✅ Primary API (DOUYIN) used successfully');
     return response.body;
-  } catch (error) {
-    console.error('Error fetching TikTok data:', error.message);
-    throw new Error(`Failed to fetch data: ${error.message} ${url}`);
+    
+  } catch (primaryError) {
+    console.warn('⚠️ Primary API failed, trying fallback:', primaryError.message);
+    
+    try {
+      // Use fallback API
+      const fallbackData = await fallbackDownloader.fetchTikTokData(url, minimal);
+      // console.log('✅ Fallback API (TikWM) used successfully');
+      return fallbackData;
+      
+    } catch (fallbackError) {
+      // console.error('❌ Both APIs failed');
+      // console.error('Primary error:', primaryError.message);
+      // console.error('Fallback error:', fallbackError.message);
+      
+      throw new Error(`All APIs failed. Primary: ${primaryError.message}, Fallback: ${fallbackError.message}`);
+    }
   }
 }
 
@@ -262,26 +278,21 @@ function generateJsonResponse(data, url = '') {
       url: url
     }));
 
-    // Generate encrypted download links for images
     const encryptedNoWatermarkUrls = imageUrls.no_watermark_image_list.map(url =>
       encrypt(JSON.stringify({ url, author: author.nickname, type: 'image' }), ENCRYPTION_KEY, 360)
     );
 
-    // Generate MP3 download link
     metadata.download_link.mp3 = `${BASE_URL}/download?data=${encrypt(JSON.stringify({url: musicUrl, author: author.nickname, type: 'mp3' }), ENCRYPTION_KEY, 360)}`;
 
-    // Add no watermark image links
     metadata.download_link.no_watermark = encryptedNoWatermarkUrls.map(
       encryptedUrl => `${BASE_URL}/download?data=${encryptedUrl}`
     );
     
-    // Add slideshow download link
     metadata.download_slideshow_link = `${BASE_URL}/download-slideshow?url=${encrypt(url, ENCRYPTION_KEY, 360)}`;
     
   } else {
     const videoUrls = videoData.video_data;
 
-    // Function to encrypt and generate download link if URL is not null
     const generateDownloadLink = (url, type) => {
       if (url) {
         const encryptedUrl = encrypt(JSON.stringify({
@@ -294,7 +305,6 @@ function generateJsonResponse(data, url = '') {
       return null;
     };
 
-    // Generate download links only if URLs are not null
     metadata.download_link = {
       watermark: generateDownloadLink(videoUrls.wm_video_url, 'video'),
       watermark_hd: generateDownloadLink(videoUrls.wm_video_url_HQ, 'video'),
@@ -303,7 +313,6 @@ function generateJsonResponse(data, url = '') {
       mp3: generateDownloadLink(musicUrl, 'mp3')
     };
 
-    // Remove null values from the metadata.download_link object
     Object.keys(metadata.download_link).forEach(key => {
       if (metadata.download_link[key] === null) {
         delete metadata.download_link[key];
@@ -329,15 +338,14 @@ app.post('/tiktok', async (req, res) => {
       return res.status(400).json({ error: 'URL parameter is required' });
     }
     
-    // Check if URL is from TikTok or Douyin
     if (!url.includes('tiktok.com') && !url.includes('douyin.com')) {
       return res.status(400).json({ error: 'Only TikTok and Douyin URLs are supported' });
     }
     
-    // Fetch data from the hybrid API
+    // Fetch data with fallback support
     const data = await fetchTikTokData(url);
     
-    // Process response using the new generateJsonResponse function
+    // Process response using the generateJsonResponse function
     const response = generateJsonResponse(data, url);
     
     return res.status(200).json(response);
@@ -356,7 +364,6 @@ app.get('/download', async (req, res) => {
       return res.status(400).json({ error: 'Encrypted data parameter is required' });
     }
     
-    // Decrypt the data
     const decryptedData = decrypt(data, ENCRYPTION_KEY);
     const downloadData = JSON.parse(decryptedData);
     
@@ -364,18 +371,15 @@ app.get('/download', async (req, res) => {
       return res.status(400).json({ error: 'Invalid decrypted data: missing url, author, or type' });
     }
     
-    // Determine content type and file extension
     if (!contentTypes[downloadData.type]) {
       return res.status(400).json({ error: 'Invalid file type specified' });
     }
     
     const [contentType, fileExtension] = contentTypes[downloadData.type];
     
-    // Configure the filename
     const filename = `${downloadData.author}.${fileExtension}`;
     const encodedFilename = encodeURIComponent(filename);
     
-    // Stream the file from source to client
     await streamDownload(downloadData.url, res, contentType, encodedFilename);
   } catch (error) {
     console.error('Error in download handler:', error);
@@ -386,7 +390,7 @@ app.get('/download', async (req, res) => {
   }
 });
 
-// Slideshow download endpoint
+// Slideshow download endpoint - modified to use fallback
 app.get('/download-slideshow', async (req, res) => {
   let workDir = '';
 
@@ -397,10 +401,9 @@ app.get('/download-slideshow', async (req, res) => {
       return res.status(400).json({ error: 'URL parameter is required' });
     }
     
-    // Decrypt the URL
     const decryptedURL = decrypt(url, ENCRYPTION_KEY);
     
-    // Fetch data from the hybrid API
+    // Use fetchTikTokData with fallback support
     const data = await fetchTikTokData(decryptedURL, true);
     
     if (!data || !data.data) {
@@ -409,14 +412,12 @@ app.get('/download-slideshow', async (req, res) => {
     
     const videoData = data.data;
     
-    // Check if it's an image post
     const isImage = videoData.type === 'image';
     
     if (!isImage) {
       return res.status(400).json({ error: 'Only image posts are supported' });
     }
     
-    // Create a unique temp directory
     const awemeId = videoData.aweme_id || 'unknown';
     const authorUid = videoData.author?.uid || 'unknown';
     const folderName = `${awemeId}_${authorUid}_${Date.now()}`;
@@ -425,14 +426,12 @@ app.get('/download-slideshow', async (req, res) => {
     await fs.ensureDir(workDir);
     
     try {
-      // Get image URLs
       const imageURLs = videoData.image_data?.no_watermark_image_list || [];
       
       if (imageURLs.length === 0) {
         throw new Error('No images found');
       }
       
-      // Get audio URL
       let audioURL = '';
       if (videoData.music && videoData.music.play_url) {
         audioURL = videoData.music.play_url.url_list?.[0] || videoData.music.play_url.url || '';
@@ -442,7 +441,6 @@ app.get('/download-slideshow', async (req, res) => {
         throw new Error('Could not find audio URL');
       }
       
-      // Parallel download function that returns the local file path
       const downloadToPath = async (url, filePath) => {
         try {
           const writeStream = fs.createWriteStream(filePath);
@@ -450,7 +448,7 @@ app.get('/download-slideshow', async (req, res) => {
           await new Promise((resolve, reject) => {
             const downloadStream = got.stream(url, {
               timeout: {
-                request: 120000 // 120 seconds timeout
+                request: 120000
               },
               retry: {
                 limit: 2
@@ -478,7 +476,6 @@ app.get('/download-slideshow', async (req, res) => {
         }
       };
       
-      // Prepare all download tasks
       const audioPath = path.join(workDir, 'audio.mp3');
       const audioTask = downloadToPath(audioURL, audioPath);
       
@@ -487,48 +484,37 @@ app.get('/download-slideshow', async (req, res) => {
         return downloadToPath(imageUrl, imagePath);
       });
       
-      // Execute all downloads in parallel
       const [imagePaths] = await Promise.all([
         Promise.all(imageDownloadTasks),
         audioTask
       ]);
       
-      // Create slideshow
       const outputPath = path.join(workDir, 'slideshow.mp4');
       await createSlideshow(imagePaths, audioPath, outputPath);
       
-      // Generate filename
       const authorNickname = videoData.author?.nickname || 'unknown';
       
-      // Sanitize filename
       const sanitized = authorNickname.replace(/[^a-zA-Z0-9]/g, '_');
       const filename = `${sanitized}_${Date.now()}.mp4`;
       
-      // Get file size to set content-length header
       const stats = await fs.stat(outputPath);
       
-      // Set headers
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Content-Length', stats.size);
       
-      // Return the file using a stream to track when download finishes
       const fileStream = createReadStream(outputPath);
       
-      // Track when the stream ends or errors
       fileStream.on('end', () => {
         console.log('File stream ended, cleaning up folder');
-        // Cleanup after download completes
         cleanupFolder(workDir);
       });
       
       fileStream.on('error', (error) => {
         console.error('Error streaming file:', error);
-        // Cleanup on streaming error
         cleanupFolder(workDir);
       });
       
-      // Handle client disconnection
       res.on('close', () => {
         if (!res.writableEnded) {
           console.log('Client disconnected before download completed, cleaning up');
@@ -536,12 +522,10 @@ app.get('/download-slideshow', async (req, res) => {
         }
       });
       
-      // Pipe the file to the response
       fileStream.pipe(res);
       
     } catch (error) {
       console.error('Error processing slideshow:', error);
-      // Cleanup on error
       if (workDir) {
         await cleanupFolder(workDir);
       }
@@ -549,7 +533,6 @@ app.get('/download-slideshow', async (req, res) => {
     }
   } catch (error) {
     console.error('Error in slideshow handler:', error);
-    // Cleanup on error if not already done
     if (workDir) {
       await cleanupFolder(workDir);
     }
@@ -557,12 +540,35 @@ app.get('/download-slideshow', async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
+// Health check endpoint - now shows which API is working
+app.get('/health', async (req, res) => {
+  const health = {
     status: 'ok',
-    time: new Date().toISOString()
-  });
+    time: new Date().toISOString(),
+    apis: {
+      primary: 'unknown',
+      fallback: 'unknown'
+    }
+  };
+
+  // Test primary API
+  try {
+    const testUrl = `${DOUYIN_API_URL}?url=test&minimal=true`;
+    await got(testUrl, { timeout: { request: 5000 }, retry: { limit: 0 } });
+    health.apis.primary = 'online';
+  } catch (error) {
+    health.apis.primary = 'offline';
+  }
+
+  // Test fallback API
+  try {
+    await fallbackDownloader.client.get('/');
+    health.apis.fallback = 'online';
+  } catch (error) {
+    health.apis.fallback = 'offline';
+  }
+
+  res.status(200).json(health);
 });
 
 // Add 404 handler
@@ -584,5 +590,7 @@ app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
   console.log(`Base URL: ${BASE_URL}`);
   console.log(`Temp directory: ${tempDir}`);
-  console.log(`Hybrid API URL: ${DOUYIN_API_URL}`);
+  console.log(`Primary API URL: ${DOUYIN_API_URL}`);
+  console.log(`Fallback API: TikWM.com`);
+  console.log(`Fallback Proxy: ${fallbackDownloader.proxy}`);
 });
