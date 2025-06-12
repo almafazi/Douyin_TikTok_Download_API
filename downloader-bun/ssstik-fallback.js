@@ -3,7 +3,7 @@ import * as cheerio from 'cheerio';
 
 class SsstikFallbackDownloader {
   constructor(options = {}) {
-    this.baseUrl = 'https://ssstik.io';
+    this.baseUrl = 'https://ssstik.apigugel3.workers.dev';
     this.timeout = options.timeout || 30000;
     this.proxy = options.proxy || null;
     this.locale = options.locale || 'id';
@@ -33,7 +33,7 @@ class SsstikFallbackDownloader {
 
   async fetchTikTokData(url, minimal = true) {
     try {
-      console.log('🔄 Using SsstikFallback for:', url);
+      //console.log('🔄 Using SsstikFallback for:', url);
       
       // Step 1: Get the initial page to extract any required tokens
       const initialResponse = await this.client.get(this.baseUrl);
@@ -64,11 +64,11 @@ class SsstikFallbackDownloader {
       // Step 6: Convert to the expected format
       const convertedData = this.convertToStandardFormat(parsedData, url);
       
-      console.log('✅ SsstikFallback succeeded');
+     // console.log('✅ SsstikFallback succeeded');
       return convertedData;
       
     } catch (error) {
-      console.error('❌ SsstikFallback failed:', error.message);
+      //console.error('❌ SsstikFallback failed:', error.message);
       throw new Error(`SsstikFallback failed: ${error.message}`);
     }
   }
@@ -359,7 +359,7 @@ class SsstikFallbackDownloader {
         
         if (coverUrl) {
           // Decode the cover image URL
-          result.metadata.cover = this.decodeTikcdnUrl(coverUrl);
+          result.metadata.cover = coverUrl;
         }
 
         // Extract audio URL

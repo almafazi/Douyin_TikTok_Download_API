@@ -16,7 +16,8 @@ import { createReadStream } from 'fs';
 import got from 'got';
 // Import the fallback library
 import TikTokFallbackDownloader from './tiktok-fallback.js';
-
+import SsstikFallbackDownloader from './ssstik-fallback.js';
+import { Transform } from 'stream';
 dotenv.config();
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
@@ -29,8 +30,13 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow';
 const DOUYIN_API_URL = process.env.DOUYIN_API_URL || 'http://127.0.0.1:3035/api/hybrid/video_data';
 
 // Initialize fallback downloader
-const fallbackDownloader = new TikTokFallbackDownloader({
-    proxy: process.env.TIKWM_PROXY || 'http://ztgvzxrb-rotate:8tmkgjfb6k44@p.webshare.io:80/',
+// const fallbackDownloader = new TikTokFallbackDownloader({
+//     proxy: process.env.TIKWM_PROXY || 'http://ztgvzxrb-rotate:8tmkgjfb6k44@p.webshare.io:80/',
+//     timeout: 30000
+// });
+
+const fallbackDownloader = new SsstikFallbackDownloader({
+    proxy: null,
     timeout: 30000
 });
 
@@ -163,15 +169,27 @@ async function streamDownload(url, res, contentType, encodedFilename) {
       }
     });
     
+    // Set headers untuk client sebelum streaming dimulai
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`);
     res.setHeader('X-Filename', encodedFilename);
     
+    // Buat transform stream untuk mengontrol header
+    const headerControlTransform = new Transform({
+      transform(chunk, encoding, callback) {
+        callback(null, chunk);
+      }
+    });
+    
+    let headersSet = false;
+    
     downloadStream.on('response', (response) => {
+      // Hanya set Content-Length, jangan copy header lain yang bisa override
       const contentLength = response.headers['content-length'];
-      if (contentLength) {
+      if (contentLength && !headersSet) {
         res.setHeader('Content-Length', contentLength);
       }
+      headersSet = true;
     });
     
     downloadStream.on('error', (error) => {
@@ -186,7 +204,11 @@ async function streamDownload(url, res, contentType, encodedFilename) {
       }
     });
     
-    downloadStream.pipe(res);
+    // Pipeline: downloadStream -> transform -> response
+    downloadStream
+      .pipe(headerControlTransform)
+      .pipe(res);
+      
   } catch (error) {
     console.error('Error in streamDownload:', error);
     
@@ -220,7 +242,7 @@ async function fetchTikTokData(url, minimal = true) {
     return response.body;
     
   } catch (primaryError) {
-    console.warn('⚠️ Primary API failed, trying fallback:', primaryError.message);
+   // console.warn('⚠️ Primary API failed, trying fallback:', primaryError.message);
     
     try {
       // Use fallback API
