@@ -2,7 +2,7 @@
 from app.main import Host_IP, Host_Port
 
 # Jumlah worker berdasarkan CPU
-workers = 4
+workers = 10
 
 # Menggunakan Uvicorn worker
 worker_class = "uvicorn.workers.UvicornWorker"
@@ -22,6 +22,10 @@ preload_app = True
 # Pengaturan log
 accesslog = "-"  # Output ke stdout
 errorlog = "-"   # Output ke stderr
+
+max_requests = 1000
+max_requests_jitter = 100
+keepalive = 5
 
 # Jika ingin menyimpan log ke file, gunakan:
 # accesslog = "/var/log/gunicorn/access.log"
