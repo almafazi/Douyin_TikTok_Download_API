@@ -30,15 +30,15 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow';
 const DOUYIN_API_URL = process.env.DOUYIN_API_URL || 'http://127.0.0.1:3035/api/hybrid/video_data';
 
 // Initialize fallback downloader
-// const fallbackDownloader = new TikTokFallbackDownloader({
-//     proxy: process.env.TIKWM_PROXY || 'http://ztgvzxrb-rotate:8tmkgjfb6k44@p.webshare.io:80/',
-//     timeout: 30000
-// });
-
-const fallbackDownloader = new SsstikFallbackDownloader({
+const fallbackDownloader = new TikTokFallbackDownloader({
     proxy: null,
     timeout: 30000
 });
+
+// const fallbackDownloader = new SsstikFallbackDownloader({
+//     proxy: null,
+//     timeout: 30000
+// });
 
 // Initialize Express app
 const app = express();
