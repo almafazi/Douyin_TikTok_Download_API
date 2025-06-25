@@ -2,7 +2,7 @@
 from app.main import Host_IP, Host_Port
 
 # Jumlah worker berdasarkan CPU
-workers = 10
+workers = 4
 
 # Menggunakan Uvicorn worker
 worker_class = "uvicorn.workers.UvicornWorker"
