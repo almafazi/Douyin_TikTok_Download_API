@@ -85,7 +85,7 @@ class TikTokAPPCrawler:
 
     # 获取单个作品数据
     # @deprecated("TikTok APP fetch_one_video is deprecated and will be removed in a future release. Use Web API instead. | TikTok APP fetch_one_video 已弃用，将在将来的版本中删除。请改用Web API。")
-    @retry(stop=stop_after_attempt(10), wait=wait_fixed(1.5), retry=retry_if_not_exception_type(VideoIdError))
+    @retry(stop=stop_after_attempt(10), wait=wait_fixed(2), retry=retry_if_not_exception_type(VideoIdError))
     async def fetch_one_video(self, aweme_id: str):
         # 获取TikTok的实时Cookie
         kwargs = await self.get_tiktok_headers()
