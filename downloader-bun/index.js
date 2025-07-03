@@ -35,6 +35,8 @@ const fallbackDownloader = new TikTokFallbackDownloader({
     timeout: 30000
 });
 
+import { generateTiktokResponse } from './tiktok-library.js';
+
 // const fallbackDownloader = new SsstikFallbackDownloader({
 //     proxy: null,
 //     timeout: 30000
@@ -364,13 +366,32 @@ app.post('/tiktok', async (req, res) => {
       return res.status(400).json({ error: 'Only TikTok and Douyin URLs are supported' });
     }
     
-    // Fetch data with fallback support
-    const data = await fetchTikTokData(url);
+    let response;
     
-    // Process response using the generateJsonResponse function
-    const response = generateJsonResponse(data, url);
+    try {
+      // Try primary TikTok API
+      response = await generateTiktokResponse(url, {
+        version: "v1",
+        cookie: null, // Cookie is set to null as requested
+        showOriginalResponse: true
+      });
+      
+    } catch (primaryError) {
+      
+      try {
+        // Fallback to alternative downloader
+        const minimal = true; // Set to true if you want minimal data
+        const fallbackData = await fallbackDownloader.fetchTikTokData(url, minimal);
+        response = generateJsonResponse(fallbackData, url);
+        
+        
+      } catch (fallbackError) {
+        throw new Error(`Both primary and fallback downloaders failed. Primary: ${primaryError.message}, Fallback: ${fallbackError.message}`);
+      }
+    }
     
     return res.status(200).json(response);
+    
   } catch (error) {
     console.error('Error in TikTok handler:', error);
     return res.status(500).json({ error: error.message || 'An error occurred processing the request' });
