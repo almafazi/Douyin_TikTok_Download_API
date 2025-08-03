@@ -6,6 +6,53 @@ dotenv.config();
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3021';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow';
+const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 3600;
+
+// Cache for storing unencrypted TikTok API results
+const resultCache = new Map();
+
+// Cache cleanup function
+function cleanupCache() {
+  const now = Date.now();
+  let cleaned = 0;
+  
+  for (const [key, { timestamp }] of resultCache.entries()) {
+    if (now - timestamp > CACHE_TTL * 1000) {
+      resultCache.delete(key);
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`[Cache] Cleaned up ${cleaned} expired entries. Current cache size: ${resultCache.size}`);
+  }
+}
+
+// Set up cache cleanup interval (every 10 minutes)
+setInterval(cleanupCache, 10 * 60 * 1000);
+
+/**
+ * Normalize URL for cache key generation
+ * @param {string} url - TikTok URL
+ * @returns {string} - Normalized URL
+ */
+function normalizeUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    // Remove mobile and vm domains, use standard tiktok.com
+    urlObj.hostname = urlObj.hostname.replace(/^(m\.|vm\.|www\.)?/, '');
+    if (urlObj.hostname.includes('tiktok.com')) {
+      urlObj.hostname = 'tiktok.com';
+    }
+    // Remove query parameters that don't affect content
+    urlObj.search = '';
+    urlObj.hash = '';
+    return urlObj.toString();
+  } catch (error) {
+    // If URL parsing fails, return original URL
+    return url;
+  }
+}
 
 /**
  * Format TikTok API response to match generateJsonResponse structure
@@ -139,11 +186,29 @@ export async function generateTiktokResponse(url, options = {}) {
       ...options
     };
 
+    // Generate cache key from normalized URL and config
+    const cacheKey = normalizeUrl(url) + JSON.stringify(config);
+    const now = Date.now();
+    
+    // Check cache first
+    const cachedResult = resultCache.get(cacheKey);
+    if (cachedResult && (now - cachedResult.timestamp) < CACHE_TTL * 1000) {
+      console.log(`[Cache] Hit for URL: ${url}`);
+      return formatTikTokResponse(cachedResult.data, url);
+    }
+
+    console.log(`[Cache] Miss for URL: ${url}`);
     const result = await Tiktok.Downloader(url, config);
     
     if (result.status !== 'success') {
       throw new Error(`TikTok API returned status: ${result.status}`);
     }
+
+    // Cache the unencrypted result
+    resultCache.set(cacheKey, {
+      data: result,
+      timestamp: now
+    });
 
     return formatTikTokResponse(result, url);
     
@@ -181,9 +246,35 @@ export function isValidTikTokUrl(url) {
   return true;
 }
 
+/**
+ * Get cache statistics
+ * @returns {Object} - Cache statistics
+ */
+export function getCacheStats() {
+  const now = Date.now();
+  let validEntries = 0;
+  let expiredEntries = 0;
+  
+  for (const [, { timestamp }] of resultCache.entries()) {
+    if (now - timestamp < CACHE_TTL * 1000) {
+      validEntries++;
+    } else {
+      expiredEntries++;
+    }
+  }
+  
+  return {
+    total_entries: resultCache.size,
+    valid_entries: validEntries,
+    expired_entries: expiredEntries,
+    cache_ttl: CACHE_TTL
+  };
+}
+
 // Default export
 export default {
   generateTiktokResponse,
   getTiktokInfo,
-  isValidTikTokUrl
+  isValidTikTokUrl,
+  getCacheStats
 };
