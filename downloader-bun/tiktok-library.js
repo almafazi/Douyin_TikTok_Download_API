@@ -1,35 +1,44 @@
 import Tiktok from "@tobyg74/tiktok-api-dl";
 import dotenv from 'dotenv';
 import { encrypt, decrypt } from './encryption.js';
+import { createClient } from 'redis';
 
 dotenv.config();
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3021';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow';
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 3600;
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
-// Cache for storing unencrypted TikTok API results
-const resultCache = new Map();
+// Redis client setup
+let redisClient;
 
-// Cache cleanup function
-function cleanupCache() {
-  const now = Date.now();
-  let cleaned = 0;
-  
-  for (const [key, { timestamp }] of resultCache.entries()) {
-    if (now - timestamp > CACHE_TTL * 1000) {
-      resultCache.delete(key);
-      cleaned++;
-    }
-  }
-  
-  if (cleaned > 0) {
-    console.log(`[Cache] Cleaned up ${cleaned} expired entries. Current cache size: ${resultCache.size}`);
+async function initRedis() {
+  try {
+    redisClient = createClient({ url: REDIS_URL });
+    
+    redisClient.on('error', (err) => {
+      console.error('[Redis] Connection error:', err.message);
+    });
+    
+    redisClient.on('connect', () => {
+      console.log('[Redis] Connected successfully');
+    });
+    
+    redisClient.on('disconnect', () => {
+      console.log('[Redis] Disconnected');
+    });
+    
+    await redisClient.connect();
+    console.log('[Redis] Client initialized');
+  } catch (error) {
+    console.error('[Redis] Failed to initialize:', error.message);
+    throw error;
   }
 }
 
-// Set up cache cleanup interval (every 10 minutes)
-setInterval(cleanupCache, 10 * 60 * 1000);
+// Initialize Redis connection
+initRedis();
 
 /**
  * Normalize URL for cache key generation
@@ -51,6 +60,41 @@ function normalizeUrl(url) {
   } catch (error) {
     // If URL parsing fails, return original URL
     return url;
+  }
+}
+
+/**
+ * Get cached result from Redis
+ * @param {string} cacheKey - Cache key
+ * @returns {Promise<Object|null>} - Cached result or null
+ */
+async function getCachedResult(cacheKey) {
+  try {
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      const parsedData = JSON.parse(cached);
+      console.log(`[Redis Cache] Hit for key: ${cacheKey.substring(0, 50)}...`);
+      return parsedData;
+    }
+  } catch (error) {
+    console.error('[Redis Cache] Error getting cached result:', error.message);
+    throw error;
+  }
+  return null;
+}
+
+/**
+ * Set cached result in Redis
+ * @param {string} cacheKey - Cache key
+ * @param {Object} data - Data to cache
+ */
+async function setCachedResult(cacheKey, data) {
+  try {
+    await redisClient.setEx(cacheKey, CACHE_TTL, JSON.stringify(data));
+    console.log(`[Redis Cache] Set for key: ${cacheKey.substring(0, 50)}...`);
+  } catch (error) {
+    console.error('[Redis Cache] Error setting cached result:', error.message);
+    throw error;
   }
 }
 
@@ -187,14 +231,12 @@ export async function generateTiktokResponse(url, options = {}) {
     };
 
     // Generate cache key from normalized URL and config
-    const cacheKey = normalizeUrl(url) + JSON.stringify(config);
-    const now = Date.now();
+    const cacheKey = `tiktok:${normalizeUrl(url)}:${JSON.stringify(config)}`;
     
     // Check cache first
-    const cachedResult = resultCache.get(cacheKey);
-    if (cachedResult && (now - cachedResult.timestamp) < CACHE_TTL * 1000) {
-      console.log(`[Cache] Hit for URL: ${url}`);
-      return formatTikTokResponse(cachedResult.data, url);
+    const cachedResult = await getCachedResult(cacheKey);
+    if (cachedResult) {
+      return formatTikTokResponse(cachedResult, url);
     }
 
     console.log(`[Cache] Miss for URL: ${url}`);
@@ -205,10 +247,7 @@ export async function generateTiktokResponse(url, options = {}) {
     }
 
     // Cache the unencrypted result
-    resultCache.set(cacheKey, {
-      data: result,
-      timestamp: now
-    });
+    await setCachedResult(cacheKey, result);
 
     return formatTikTokResponse(result, url);
     
@@ -248,27 +287,28 @@ export function isValidTikTokUrl(url) {
 
 /**
  * Get cache statistics
- * @returns {Object} - Cache statistics
+ * @returns {Promise<Object>} - Cache statistics
  */
-export function getCacheStats() {
-  const now = Date.now();
-  let validEntries = 0;
-  let expiredEntries = 0;
-  
-  for (const [, { timestamp }] of resultCache.entries()) {
-    if (now - timestamp < CACHE_TTL * 1000) {
-      validEntries++;
-    } else {
-      expiredEntries++;
-    }
+export async function getCacheStats() {
+  try {
+    // Get Redis info
+    const info = await redisClient.info('keyspace');
+    const dbInfo = info.match(/db0:keys=(\d+)/);
+    const totalKeys = dbInfo ? parseInt(dbInfo[1]) : 0;
+    
+    // Count tiktok-specific keys
+    const tiktokKeys = await redisClient.keys('tiktok:*');
+    
+    return {
+      cache_type: 'redis',
+      total_entries: totalKeys,
+      tiktok_entries: tiktokKeys.length,
+      cache_ttl: CACHE_TTL,
+      redis_url: REDIS_URL
+    };
+  } catch (error) {
+    throw new Error(`Redis cache stats error: ${error.message}`);
   }
-  
-  return {
-    total_entries: resultCache.size,
-    valid_entries: validEntries,
-    expired_entries: expiredEntries,
-    cache_ttl: CACHE_TTL
-  };
 }
 
 // Default export

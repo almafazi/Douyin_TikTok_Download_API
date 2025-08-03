@@ -22,7 +22,8 @@
     "helmet": "^8.1.0",
     "https-proxy-agent": "^7.0.6",
     "node-cron": "^3.0.3",
-    "node-schedule": "^2.1.1"
+    "node-schedule": "^2.1.1",
+    "redis": "^5.7.0"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"

@@ -12,10 +12,28 @@ services:
       - BASE_URL=https://tt.y2mate.biz.id  # Change this to your actual public URL in production
       - ENCRYPTION_KEY=overflow  # Change this to a secure key
       - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000/api/hybrid/video_data  # Update this as needed
+      - REDIS_URL=redis://redis:6379
+      - CACHE_TTL=3600
     volumes:
       - ./temp:/app/temp
     networks:
       - tiktok_shared_network
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - tiktok_shared_network
+    command: redis-server --appendonly yes
+
+volumes:
+  redis_data:
 
 networks:
   tiktok_shared_network:
