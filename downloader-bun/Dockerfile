@@ -3,6 +3,7 @@ FROM node:current-bullseye-slim
 # Install dependencies for ffmpeg
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory

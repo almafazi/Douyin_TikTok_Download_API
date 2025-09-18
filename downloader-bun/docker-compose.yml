@@ -20,6 +20,8 @@ services:
       - tiktok_shared_network
     depends_on:
       - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   redis:
     image: redis:7-alpine
