@@ -48,7 +48,7 @@ class TikTokFallbackDownloader {
                         require('fs').existsSync('/.dockerenv');
 
         // Use host.docker.internal for Docker, 127.0.0.1 for local
-        const proxyHost = isDocker ? 'host.docker.internal' : '127.0.0.1';
+        const proxyHost = isDocker ? '194.233.73.131' : '127.0.0.1';
 
         return `http://${proxyHost}:${port}`;
     }
