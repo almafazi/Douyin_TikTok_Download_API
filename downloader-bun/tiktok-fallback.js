@@ -41,7 +41,16 @@ class TikTokFallbackDownloader {
      */
     getRandomProxy() {
         const port = Math.floor(Math.random() * 3) + 60000; // Random port between 60000-60002
-        return `http://127.0.0.1:${port}`;
+
+        // Check if running in Docker container
+        const isDocker = process.env.DOCKER_ENV === 'true' ||
+                        process.env.NODE_ENV === 'docker' ||
+                        require('fs').existsSync('/.dockerenv');
+
+        // Use host.docker.internal for Docker, 127.0.0.1 for local
+        const proxyHost = isDocker ? 'host.docker.internal' : '127.0.0.1';
+
+        return `http://${proxyHost}:${port}`;
     }
 
     /**
