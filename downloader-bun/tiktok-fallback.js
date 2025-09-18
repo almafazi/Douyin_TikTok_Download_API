@@ -1,20 +1,22 @@
 import axios from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 class TikTokFallbackDownloader {
     constructor(options = {}) {
         this.baseURL = options.baseURL || 'https://www.tikwm.com';
         this.apiEndpoint = '/api/';
-        // this.proxy = options.proxy || 'http://ztgvzxrb-rotate:8tmkgjfb6k44@p.webshare.io:80/';
         this.timeout = options.timeout || 30000;
         this.maxRetries = options.maxRetries || 2;
         this.retryDelay = options.retryDelay || 1000; // 1 second
-        
-        // Setup axios instance with proxy
-        this.client = axios.create({
-            baseURL: "https://tiktok.apigugel3.workers.dev",
+        this.useProxy = process.env.USE_PROXY === 'true';
+
+        // Setup axios instance with or without proxy
+        const clientConfig = {
+            baseURL: "https://www.tikwm.com",
             timeout: this.timeout,
-            // httpsAgent: new HttpsProxyAgent(this.proxy),
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': 'application/json, text/plain, */*',
@@ -24,7 +26,22 @@ class TikTokFallbackDownloader {
                 'Origin': 'https://www.tikwm.com',
                 'Referer': 'https://www.tikwm.com/'
             }
-        });
+        };
+
+        if (this.useProxy) {
+            clientConfig.httpsAgent = new HttpsProxyAgent(this.getRandomProxy());
+        }
+
+        this.client = axios.create(clientConfig);
+    }
+
+    /**
+     * Get random proxy from the specified range
+     * @returns {string} Random proxy URL
+     */
+    getRandomProxy() {
+        const port = Math.floor(Math.random() * 3) + 60000; // Random port between 60000-60002
+        return `http://127.0.0.1:${port}`;
     }
 
     /**
