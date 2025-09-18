@@ -14,14 +14,14 @@ services:
       - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000/api/hybrid/video_data  # Update this as needed
       - REDIS_URL=redis://redis:6379
       - CACHE_TTL=3600
+      - DOCKER_ENV=true
+      - USE_PROXY=true
     volumes:
       - ./temp:/app/temp
     networks:
       - tiktok_shared_network
     depends_on:
       - redis
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   redis:
     image: redis:7-alpine
