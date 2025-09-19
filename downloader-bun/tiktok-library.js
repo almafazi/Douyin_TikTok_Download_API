@@ -238,8 +238,8 @@ function formatTikTokV2Response(apiResponse) {
 
   let picker = [];
   let metadata = {
-    title: result.desc || '',
-    description: result.desc || '',
+    title: result.desc || nickname,
+    description: result.desc || nickname,
     statistics: {
       repost_count: 0,
       comment_count: parseInt(result.statistics?.commentCount || 0),
@@ -247,7 +247,7 @@ function formatTikTokV2Response(apiResponse) {
       play_count: parseInt(result.statistics?.shareCount || 0)
     },
     artist: nickname,
-    cover: '',
+    cover: result.cover || '',
     duration: 0,
     audio: result.music?.playUrl?.[0] || '',
     download_link: {},
@@ -257,19 +257,31 @@ function formatTikTokV2Response(apiResponse) {
 
   if (!isImage) {
     // Handle video posts from v2 API
+    const generateDownloadLink = (url, type) => {
+      if (url) {
+        const encryptedUrl = encrypt(JSON.stringify({
+          url: url,
+          author: nickname,
+          type: type
+        }), ENCRYPTION_KEY, 360);
+        return `${BASE_URL}/download?data=${encryptedUrl}`;
+      }
+      return null;
+    };
+
     const downloadLinks = {};
 
     // V2 API structure: result.video.playAddr[0] and result.music.playUrl[0]
     const videoUrl = result.video?.playAddr?.[0];
     const audioUrl = result.music?.playUrl?.[0];
 
-    // V2 sends direct URLs without encryption
+    // V2 now uses encryption like V1
     if (videoUrl) {
-      downloadLinks.no_watermark = videoUrl;
+      downloadLinks.no_watermark = generateDownloadLink(videoUrl, 'video');
     }
 
     if (audioUrl) {
-      downloadLinks.mp3 = audioUrl;
+      downloadLinks.mp3 = generateDownloadLink(audioUrl, 'mp3');
     }
 
     metadata.download_link = downloadLinks;
