@@ -377,17 +377,16 @@ app.post('/tiktok', async (req, res) => {
       });
 
     } catch (primaryError) {
-
-      try {
-        // Fallback to external TikWM downloader as last resort
-        const minimal = true;
-        const fallbackData = await fallbackDownloader.fetchTikTokData(url, minimal);
-        response = generateJsonResponse(fallbackData, url);
-
-
-      } catch (fallbackError) {
-        throw new Error(`All APIs failed. Primary (v1/v2): ${primaryError.message}, External fallback: ${fallbackError.message}`);
-      }
+      // External fallback is temporarily disabled
+      // try {
+      //   // Fallback to external TikWM downloader as last resort
+      //   const minimal = true;
+      //   const fallbackData = await fallbackDownloader.fetchTikTokData(url, minimal);
+      //   response = generateJsonResponse(fallbackData, url);
+      // } catch (fallbackError) {
+      //   throw new Error(`All APIs failed. Primary (v1/v2): ${primaryError.message}, External fallback: ${fallbackError.message}`);
+      // }
+      throw primaryError;
     }
 
     return res.status(200).json(response);
