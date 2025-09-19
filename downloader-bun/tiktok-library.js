@@ -99,23 +99,23 @@ async function setCachedResult(cacheKey, data) {
 }
 
 /**
- * Format TikTok API response to match generateJsonResponse structure
- * @param {Object} apiResponse - Raw TikTok API response
+ * Format TikTok API v1 response to match generateJsonResponse structure
+ * @param {Object} apiResponse - Raw TikTok API v1 response
  * @param {string} originalUrl - Original TikTok URL
  * @returns {Object} - Formatted response
  */
-function formatTikTokResponse(apiResponse, originalUrl = '') {
+function formatTikTokV1Response(apiResponse, originalUrl = '') {
   const data = apiResponse.resultNotParsed.content;
   const author = data.author;
   const statistics = data.statistics;
   const music = data.music;
-  
+
   // Check if this is an image post
   const isImage = data.aweme_type === 150 && data.image_post_info;
-  
+
   // Get music URL
   const musicUrl = music?.play_url?.uri || music?.play_url?.url_list?.[0] || '';
-  
+
   const filteredAuthor = {
     nickname: author.nickname,
     signature: author.signature,
@@ -144,7 +144,7 @@ function formatTikTokResponse(apiResponse, originalUrl = '') {
   if (isImage) {
     // Handle image posts
     const images = data.image_post_info.images;
-    
+
     picker = images.map(image => ({
       type: 'photo',
       url: image.display_image.url_list[0]
@@ -153,29 +153,29 @@ function formatTikTokResponse(apiResponse, originalUrl = '') {
     // Create encrypted download links for images
     const encryptedNoWatermarkUrls = images.map(image => {
       const imageUrl = image.display_image.url_list[0];
-      return encrypt(JSON.stringify({ 
-        url: imageUrl, 
-        author: author.nickname, 
-        type: 'image' 
+      return encrypt(JSON.stringify({
+        url: imageUrl,
+        author: author.nickname,
+        type: 'image'
       }), ENCRYPTION_KEY, 360);
     });
 
     metadata.download_link.mp3 = `${BASE_URL}/download?data=${encrypt(JSON.stringify({
-      url: musicUrl, 
-      author: author.nickname, 
-      type: 'mp3' 
+      url: musicUrl,
+      author: author.nickname,
+      type: 'mp3'
     }), ENCRYPTION_KEY, 360)}`;
 
     metadata.download_link.no_watermark = encryptedNoWatermarkUrls.map(
       encryptedUrl => `${BASE_URL}/download?data=${encryptedUrl}`
     );
-    
+
     metadata.download_slideshow_link = `${BASE_URL}/download-slideshow?url=${encrypt(originalUrl, ENCRYPTION_KEY, 360)}`;
-    
+
   } else {
     // Handle video posts
     const video = data.video;
-    
+
     const generateDownloadLink = (url, type) => {
       if (url) {
         const encryptedUrl = encrypt(JSON.stringify({
@@ -216,7 +216,74 @@ function formatTikTokResponse(apiResponse, originalUrl = '') {
 }
 
 /**
- * Main function to generate TikTok response
+ * Format TikTok API v2 response to match generateJsonResponse structure
+ * @param {Object} apiResponse - Raw TikTok API v2 response
+ * @returns {Object} - Formatted response
+ */
+function formatTikTokV2Response(apiResponse) {
+  const result = apiResponse.result;
+  const author = result.author;
+
+  // V2 API only supports video for now
+  const isImage = result.type === 'image';
+
+  // Extract nickname from author (could be @username format)
+  const nickname = author.nickname.startsWith('@') ? author.nickname.substring(1) : author.nickname;
+
+  const filteredAuthor = {
+    nickname: nickname,
+    signature: '',
+    avatar: author.avatar
+  };
+
+  let picker = [];
+  let metadata = {
+    title: result.desc || '',
+    description: result.desc || '',
+    statistics: {
+      repost_count: 0,
+      comment_count: parseInt(result.statistics?.commentCount || 0),
+      digg_count: parseInt(result.statistics?.likeCount || 0),
+      play_count: parseInt(result.statistics?.shareCount || 0)
+    },
+    artist: nickname,
+    cover: '',
+    duration: 0,
+    audio: result.music?.playUrl?.[0] || '',
+    download_link: {},
+    music_duration: 0,
+    author: filteredAuthor
+  };
+
+  if (!isImage) {
+    // Handle video posts from v2 API
+    const downloadLinks = {};
+
+    // V2 API structure: result.video.playAddr[0] and result.music.playUrl[0]
+    const videoUrl = result.video?.playAddr?.[0];
+    const audioUrl = result.music?.playUrl?.[0];
+
+    // V2 sends direct URLs without encryption
+    if (videoUrl) {
+      downloadLinks.no_watermark = videoUrl;
+    }
+
+    if (audioUrl) {
+      downloadLinks.mp3 = audioUrl;
+    }
+
+    metadata.download_link = downloadLinks;
+  }
+
+  return {
+    status: isImage ? 'picker' : 'tunnel',
+    photos: picker,
+    ...metadata
+  };
+}
+
+/**
+ * Main function to generate TikTok response with v1 and v2 fallback
  * @param {string} url - TikTok URL
  * @param {Object} options - Optional parameters
  * @returns {Promise<Object>} - Formatted TikTok response
@@ -232,25 +299,57 @@ export async function generateTiktokResponse(url, options = {}) {
 
     // Generate cache key from normalized URL and config
     const cacheKey = `tiktok:${normalizeUrl(url)}:${JSON.stringify(config)}`;
-    
+
     // Check cache first
     const cachedResult = await getCachedResult(cacheKey);
     if (cachedResult) {
-      return formatTikTokResponse(cachedResult, url);
+      // Determine response version from cached data structure
+      if (cachedResult.resultNotParsed && cachedResult.resultNotParsed.content) {
+        return formatTikTokV1Response(cachedResult, url);
+      } else if (cachedResult.result) {
+        return formatTikTokV2Response(cachedResult);
+      }
     }
 
     console.log(`[Cache] Miss for URL: ${url}`);
-    const result = await Tiktok.Downloader(url, config);
-    
-    if (result.status !== 'success') {
-      throw new Error(`TikTok API returned status: ${result.status}`);
+
+    try {
+      // Try v1 first
+      const result = await Tiktok.Downloader(url, config);
+
+      if (result.status !== 'success') {
+        throw new Error(`TikTok API v1 returned status: ${result.status}`);
+      }
+
+      // Cache the unencrypted result
+      await setCachedResult(cacheKey, result);
+
+      return formatTikTokV1Response(result, url);
+
+    } catch (v1Error) {
+      console.log(`[V1 Failed] ${v1Error.message}, trying v2...`);
+
+      try {
+        // Try v2 as fallback
+        const configV2 = { ...config, version: "v2" };
+        const cacheKeyV2 = `tiktok:${normalizeUrl(url)}:${JSON.stringify(configV2)}`;
+
+        const result = await Tiktok.Downloader(url, configV2);
+
+        if (result.status !== 'success') {
+          throw new Error(`TikTok API v2 returned status: ${result.status}`);
+        }
+
+        // Cache the v2 result
+        await setCachedResult(cacheKeyV2, result);
+
+        return formatTikTokV2Response(result);
+
+      } catch (v2Error) {
+        throw new Error(`Both v1 and v2 failed. V1: ${v1Error.message}, V2: ${v2Error.message}`);
+      }
     }
 
-    // Cache the unencrypted result
-    await setCachedResult(cacheKey, result);
-
-    return formatTikTokResponse(result, url);
-    
   } catch (error) {
     throw new Error(`Failed to process TikTok URL: ${error.message}`);
   }
@@ -258,19 +357,19 @@ export async function generateTiktokResponse(url, options = {}) {
 
 /**
  * Get TikTok video/image information without download links
- * @param {string} url - TikTok URL
+ * @param {string} tiktokUrl - TikTok URL
  * @param {Object} options - Optional parameters
  * @returns {Promise<Object>} - TikTok information
  */
-export async function getTiktokInfo(url, options = {}) {
+export async function getTiktokInfo(tiktokUrl, options = {}) {
   try {
-    const response = await generateTiktokResponse(url, options);
-    
+    const response = await generateTiktokResponse(tiktokUrl, options);
+
     // Remove download links for info-only response
     const { download_link, download_slideshow_link, ...info } = response;
-    
+
     return info;
-    
+
   } catch (error) {
     throw new Error(`Failed to get TikTok info: ${error.message}`);
   }
