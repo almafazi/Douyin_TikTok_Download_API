@@ -295,7 +295,95 @@ function formatTikTokV2Response(apiResponse) {
 }
 
 /**
- * Main function to generate TikTok response with v1 and v2 fallback
+ * Format TikTok API v3 response to match generateJsonResponse structure
+ * @param {Object} apiResponse - Raw TikTok API v3 response
+ * @returns {Object} - Formatted response
+ */
+function formatTikTokV3Response(apiResponse) {
+  const result = apiResponse.result;
+  const author = result.author;
+
+  // V3 API only supports video for now
+  const isImage = result.type === 'image';
+
+  // Extract nickname from author (could be @username format)
+  const nickname = author.nickname.startsWith('@') ? author.nickname.substring(1) : author.nickname;
+
+  const filteredAuthor = {
+    nickname: nickname,
+    signature: '',
+    avatar: author.avatar
+  };
+
+  let picker = [];
+  let metadata = {
+    title: result.desc || nickname,
+    description: result.desc || nickname,
+    statistics: {
+      repost_count: 0,
+      comment_count: 0,
+      digg_count: 0,
+      play_count: 0
+    },
+    artist: nickname,
+    cover: result.cover || '',
+    duration: 0,
+    audio: result.music || '',
+    download_link: {},
+    music_duration: 0,
+    author: filteredAuthor
+  };
+
+  if (!isImage) {
+    // Handle video posts from v3 API
+    const generateDownloadLink = (url, type) => {
+      if (url) {
+        const encryptedUrl = encrypt(JSON.stringify({
+          url: url,
+          author: nickname,
+          type: type
+        }), ENCRYPTION_KEY, 360);
+        return `${BASE_URL}/download?data=${encryptedUrl}`;
+      }
+      return null;
+    };
+
+    const downloadLinks = {};
+
+    // V3 API structure: result.videoSD, result.videoHD, result.videoWatermark, result.music
+    const videoSdUrl = result.videoSD;
+    const videoHdUrl = result.videoHD;
+    const videoWatermarkUrl = result.videoWatermark;
+    const audioUrl = result.music;
+
+    if (videoSdUrl) {
+      downloadLinks.no_watermark = generateDownloadLink(videoSdUrl, 'video');
+    }
+
+    if (videoHdUrl) {
+      downloadLinks.no_watermark_hd = generateDownloadLink(videoHdUrl, 'video');
+    }
+
+    if (videoWatermarkUrl) {
+      downloadLinks.watermark = generateDownloadLink(videoWatermarkUrl, 'video');
+    }
+
+    if (audioUrl) {
+      downloadLinks.mp3 = generateDownloadLink(audioUrl, 'mp3');
+    }
+
+    metadata.download_link = downloadLinks;
+  }
+
+  return {
+    status: isImage ? 'picker' : 'tunnel',
+    photos: picker,
+    ...metadata
+  };
+}
+
+/**
+ * Main function to generate TikTok response with v1 and v3 fallback
  * @param {string} url - TikTok URL
  * @param {Object} options - Optional parameters
  * @returns {Promise<Object>} - Formatted TikTok response
@@ -319,7 +407,12 @@ export async function generateTiktokResponse(url, options = {}) {
       if (cachedResult.resultNotParsed && cachedResult.resultNotParsed.content) {
         return formatTikTokV1Response(cachedResult, url);
       } else if (cachedResult.result) {
-        return formatTikTokV2Response(cachedResult);
+        // Check if it's V3 or V2 response based on structure
+        if (cachedResult.result.videoSD || cachedResult.result.videoHD || cachedResult.result.videoWatermark) {
+          return formatTikTokV3Response(cachedResult);
+        } else {
+          return formatTikTokV2Response(cachedResult);
+        }
       }
     }
 
@@ -339,26 +432,26 @@ export async function generateTiktokResponse(url, options = {}) {
       return formatTikTokV1Response(result, url);
 
     } catch (v1Error) {
-      console.log(`[V1 Failed] ${v1Error.message}, trying v2...`);
+      console.log(`[V1 Failed] ${v1Error.message}, trying v3...`);
 
       try {
-        // Try v2 as fallback
-        const configV2 = { ...config, version: "v2" };
-        const cacheKeyV2 = `tiktok:${normalizeUrl(url)}:${JSON.stringify(configV2)}`;
+        // Try v3 as fallback
+        const configV3 = { ...config, version: "v3" };
+        const cacheKeyV3 = `tiktok:${normalizeUrl(url)}:${JSON.stringify(configV3)}`;
 
-        const result = await Tiktok.Downloader(url, configV2);
+        const result = await Tiktok.Downloader(url, configV3);
 
         if (result.status !== 'success') {
-          throw new Error(`TikTok API v2 returned status: ${result.status}`);
+          throw new Error(`TikTok API v3 returned status: ${result.status}`);
         }
 
-        // Cache the v2 result
-        await setCachedResult(cacheKeyV2, result);
+        // Cache the v3 result
+        await setCachedResult(cacheKeyV3, result);
 
-        return formatTikTokV2Response(result);
+        return formatTikTokV3Response(result);
 
-      } catch (v2Error) {
-        throw new Error(`Both v1 and v2 failed. V1: ${v1Error.message}, V2: ${v2Error.message}`);
+      } catch (v3Error) {
+        throw new Error(`Both v1 and v3 failed. V1: ${v1Error.message}, V3: ${v3Error.message}`);
       }
     }
 
