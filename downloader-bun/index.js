@@ -228,6 +228,15 @@ async function streamDownload(url, res, contentType, encodedFilename) {
         callback(null, chunk);
       }
     });
+
+    const handleClose = () => {
+      if (!downloadStream.destroyed) {
+        downloadStream.destroy(new Error('Client closed connection'));
+      }
+      headerControlTransform.destroy();
+    };
+    
+    res.once('close', handleClose);
     
     let headersSet = false;
     
@@ -242,6 +251,7 @@ async function streamDownload(url, res, contentType, encodedFilename) {
     
     downloadStream.on('error', (error) => {
       console.error('Error streaming file:', error);
+      res.removeListener('close', handleClose);
       
       if (!res.headersSent) {
         res.status(500).json({
@@ -250,6 +260,10 @@ async function streamDownload(url, res, contentType, encodedFilename) {
       } else {
         res.end();
       }
+    });
+
+    downloadStream.on('end', () => {
+      res.removeListener('close', handleClose);
     });
     
     // Pipeline: downloadStream -> transform -> response
