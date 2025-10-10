@@ -71,73 +71,119 @@ const contentTypes = {
   image: ['image/jpeg', 'jpg']
 };
 
-async function downloadFile(url, outputPath) {
+async function downloadFile(url, outputPath, options = {}) {
+  const { signal } = options;
+  const cleanupPartial = () => fs.remove(outputPath).catch(() => {});
+
   try {
-    const writeStream = fs.createWriteStream(outputPath);
-    
     await new Promise((resolve, reject) => {
+      const writeStream = fs.createWriteStream(outputPath);
       const downloadStream = got.stream(url, {
         timeout: {
           request: 120000 // 120 seconds timeout
         },
         retry: {
           limit: 2
-        }
+        },
+        signal
       });
-      
+
+      const handleError = (error) => {
+        downloadStream.destroy();
+        writeStream.destroy();
+        cleanupPartial().finally(() => reject(error));
+      };
+
       downloadStream.pipe(writeStream);
-      
-      downloadStream.on('error', (error) => {
-        reject(error);
-      });
-      
-      writeStream.on('finish', () => {
-        resolve();
-      });
-      
-      writeStream.on('error', (error) => {
-        reject(error);
-      });
+
+      downloadStream.on('error', handleError);
+      writeStream.on('error', handleError);
+      writeStream.on('finish', resolve);
     });
-    
+
     return outputPath;
   } catch (error) {
+    if (error?.name === 'AbortError' || error?.name === 'CancelError') {
+      throw error;
+    }
     throw new Error(`Failed to download file: ${error.message}`);
   }
 }
 
 // Create a slideshow from images and audio
-function createSlideshow(imagePaths, audioPath, outputPath) {
+function createSlideshow(imagePaths, audioPath, outputPath, options = {}) {
+  const { onCommand, signal } = options;
+
   return new Promise((resolve, reject) => {
     const command = ffmpeg();
-    
+    let settled = false;
+
+    if (typeof onCommand === 'function') {
+      onCommand(command);
+    }
+
+    const finish = (callback) => (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+      callback(value);
+    };
+
+    const onAbort = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      try {
+        command.kill('SIGKILL');
+      } catch (abortError) {
+        // Ignore kill errors; command may already be stopped
+      }
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+      reject(new Error('Slideshow rendering aborted'));
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+    }
+
     // Add each image as input
     imagePaths.forEach(imagePath => {
       command.input(imagePath).inputOptions(['-loop 1', '-t 4']);
     });
-    
+
     // Add audio with loop
     command.input(audioPath).inputOptions(['-stream_loop -1']);
-    
+
     // Build complex filter for scaling and concatenating images
     const filter = [];
-    
+
     // Scale and pad each image
     imagePaths.forEach((_, index) => {
       filter.push(`[${index}:v]scale=w=1080:h=1920:force_original_aspect_ratio=decrease,` +
         `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v${index}]`);
     });
-    
+
     // Concatenate all scaled/padded video streams
     const concatInputs = imagePaths.map((_, i) => `[v${i}]`).join('');
     filter.push(`${concatInputs}concat=n=${imagePaths.length}:v=1:a=0[vout]`);
-    
+
     // Calculate total duration
     const videoDuration = imagePaths.length * 4;
-    
+
     // Add audio filter to trim the looping audio to the video duration
     filter.push(`[${imagePaths.length}:a]atrim=0:${videoDuration}[aout]`);
-    
+
     command
       .complexFilter(filter)
       .outputOptions([
@@ -148,13 +194,13 @@ function createSlideshow(imagePaths, audioPath, outputPath) {
       ])
       .videoCodec('libx264')
       .output(outputPath)
-      .on('error', (err) => {
+      .on('error', finish((err) => {
         reject(new Error(`FFmpeg error: ${err.message}`));
-      })
-      .on('end', () => {
+      }))
+      .on('end', finish(() => {
         console.log('Slideshow created successfully');
         resolve();
-      })
+      }))
       .run();
   });
 }
@@ -434,151 +480,183 @@ app.get('/download', async (req, res) => {
 
 // Slideshow download endpoint - modified to use fallback
 app.get('/download-slideshow', async (req, res) => {
+  const jobAbortController = new AbortController();
   let workDir = '';
+  let ffmpegCommand = null;
+  let fileStream = null;
+  let tempCleaned = false;
+
+  const cleanupTempDir = async () => {
+    if (tempCleaned || !workDir) {
+      return;
+    }
+    tempCleaned = true;
+    try {
+      await cleanupFolder(workDir);
+    } catch (cleanupError) {
+      console.error('Error removing temp folder:', cleanupError);
+    }
+  };
+
+  const detachListeners = () => {
+    req.removeListener('close', onRequestClose);
+    res.removeListener('close', onResponseClose);
+  };
+
+  const cancelJob = async () => {
+    if (!jobAbortController.signal.aborted) {
+      jobAbortController.abort();
+    }
+
+    if (ffmpegCommand) {
+      try {
+        ffmpegCommand.kill('SIGKILL');
+      } catch (error) {
+        // Ignore kill errors; command may have already exited
+      } finally {
+        ffmpegCommand = null;
+      }
+    }
+
+    if (fileStream) {
+      fileStream.destroy();
+      fileStream = null;
+    }
+
+    await cleanupTempDir();
+    detachListeners();
+  };
+
+  function onRequestClose() {
+    cancelJob().catch((err) => {
+      console.error('Error cancelling slideshow job:', err);
+    });
+  }
+
+  function onResponseClose() {
+    if (!res.writableEnded) {
+      onRequestClose();
+    }
+  }
+
+  req.on('close', onRequestClose);
+  res.on('close', onResponseClose);
 
   try {
     const { url } = req.query;
-    
+
     if (!url) {
+      await cleanupTempDir();
+      detachListeners();
       return res.status(400).json({ error: 'URL parameter is required' });
     }
-    
+
     const decryptedURL = decrypt(url, ENCRYPTION_KEY);
-    
+
     // Use fetchTikTokData with fallback support
     const data = await fetchTikTokData(decryptedURL, true);
-    
+
     if (!data || !data.data) {
+      await cleanupTempDir();
+      detachListeners();
       return res.status(500).json({ error: 'Invalid response from API' });
     }
-    
+
     const videoData = data.data;
-    
+
     const isImage = videoData.type === 'image';
-    
+
     if (!isImage) {
+      await cleanupTempDir();
+      detachListeners();
       return res.status(400).json({ error: 'Only image posts are supported' });
     }
-    
+
     const awemeId = videoData.aweme_id || 'unknown';
     const authorUid = videoData.author?.uid || 'unknown';
     const folderName = `${awemeId}_${authorUid}_${Date.now()}`;
     workDir = path.join(tempDir, folderName);
-    
+
     await fs.ensureDir(workDir);
-    
-    try {
-      const imageURLs = videoData.image_data?.no_watermark_image_list || [];
-      
-      if (imageURLs.length === 0) {
-        throw new Error('No images found');
-      }
-      
-      let audioURL = '';
-      if (videoData.music && videoData.music.play_url) {
-        audioURL = videoData.music.play_url.url_list?.[0] || videoData.music.play_url.url || '';
-      }
-      
-      if (!audioURL) {
-        throw new Error('Could not find audio URL');
-      }
-      
-      const downloadToPath = async (url, filePath) => {
-        try {
-          const writeStream = fs.createWriteStream(filePath);
-          
-          await new Promise((resolve, reject) => {
-            const downloadStream = got.stream(url, {
-              timeout: {
-                request: 120000
-              },
-              retry: {
-                limit: 2
-              }
-            });
-            
-            downloadStream.pipe(writeStream);
-            
-            downloadStream.on('error', (error) => {
-              reject(error);
-            });
-            
-            writeStream.on('finish', () => {
-              resolve();
-            });
-            
-            writeStream.on('error', (error) => {
-              reject(error);
-            });
-          });
-          
-          return filePath;
-        } catch (error) {
-          throw new Error(`Failed to download file (${url}): ${error.message}`);
-        }
-      };
-      
-      const audioPath = path.join(workDir, 'audio.mp3');
-      const audioTask = downloadToPath(audioURL, audioPath);
-      
-      const imageDownloadTasks = imageURLs.map((imageUrl, index) => {
-        const imagePath = path.join(workDir, `image_${index}.jpg`);
-        return downloadToPath(imageUrl, imagePath);
-      });
-      
-      const [imagePaths] = await Promise.all([
-        Promise.all(imageDownloadTasks),
-        audioTask
-      ]);
-      
-      const outputPath = path.join(workDir, 'slideshow.mp4');
-      await createSlideshow(imagePaths, audioPath, outputPath);
-      
-      const authorNickname = videoData.author?.nickname || 'unknown';
-      
-      const sanitized = authorNickname.replace(/[^a-zA-Z0-9]/g, '_');
-      const filename = `${sanitized}_${Date.now()}.mp4`;
-      
-      const stats = await fs.stat(outputPath);
-      
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', stats.size);
-      
-      const fileStream = createReadStream(outputPath);
-      
-      fileStream.on('end', () => {
-        console.log('File stream ended, cleaning up folder');
-        cleanupFolder(workDir);
-      });
-      
-      fileStream.on('error', (error) => {
-        console.error('Error streaming file:', error);
-        cleanupFolder(workDir);
-      });
-      
-      res.on('close', () => {
-        if (!res.writableEnded) {
-          console.log('Client disconnected before download completed, cleaning up');
-          cleanupFolder(workDir);
-        }
-      });
-      
-      fileStream.pipe(res);
-      
-    } catch (error) {
-      console.error('Error processing slideshow:', error);
-      if (workDir) {
-        await cleanupFolder(workDir);
-      }
-      throw error;
+
+    const imageURLs = videoData.image_data?.no_watermark_image_list || [];
+
+    if (imageURLs.length === 0) {
+      throw new Error('No images found');
     }
+
+    let audioURL = '';
+    if (videoData.music && videoData.music.play_url) {
+      audioURL = videoData.music.play_url.url_list?.[0] || videoData.music.play_url.url || '';
+    }
+
+    if (!audioURL) {
+      throw new Error('Could not find audio URL');
+    }
+
+    const audioPath = path.join(workDir, 'audio.mp3');
+    const audioTask = downloadFile(audioURL, audioPath, { signal: jobAbortController.signal });
+
+    const imageDownloadTasks = imageURLs.map((imageUrl, index) => {
+      const imagePath = path.join(workDir, `image_${index}.jpg`);
+      return downloadFile(imageUrl, imagePath, { signal: jobAbortController.signal });
+    });
+
+    const [imagePaths] = await Promise.all([
+      Promise.all(imageDownloadTasks),
+      audioTask
+    ]);
+
+    const outputPath = path.join(workDir, 'slideshow.mp4');
+    await createSlideshow(imagePaths, audioPath, outputPath, {
+      signal: jobAbortController.signal,
+      onCommand: (command) => {
+        ffmpegCommand = command;
+      }
+    });
+    ffmpegCommand = null;
+
+    const authorNickname = videoData.author?.nickname || 'unknown';
+
+    const sanitized = authorNickname.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `${sanitized}_${Date.now()}.mp4`;
+
+    const stats = await fs.stat(outputPath);
+
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', stats.size);
+
+    fileStream = createReadStream(outputPath);
+
+    fileStream.on('end', () => {
+      fileStream = null;
+      console.log('File stream ended, cleaning up folder');
+      cleanupTempDir().finally(detachListeners);
+    });
+
+    fileStream.on('error', (error) => {
+      console.error('Error streaming file:', error);
+      cancelJob().catch((err) => {
+        console.error('Error during cancellation after stream failure:', err);
+      });
+    });
+
+    fileStream.pipe(res);
+
   } catch (error) {
     console.error('Error in slideshow handler:', error);
-    if (workDir) {
-      await cleanupFolder(workDir);
+
+    if (jobAbortController.signal.aborted) {
+      return;
     }
-    return res.status(500).json({ error: error.message || 'An error occurred creating the slideshow' });
+
+    await cleanupTempDir();
+    detachListeners();
+
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error.message || 'An error occurred creating the slideshow' });
+    }
   }
 });
 
