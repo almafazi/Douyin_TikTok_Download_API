@@ -12,13 +12,13 @@ services:
     volumes:
       - ./temp:/app/temp
     environment:
-      - BASE_URL=https://tt.y2mate.biz.id
+      - BASE_URL=https://d.snaptik.fit
       - PORT=3021
       - ENCRYPTION_KEY=overflow
       - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000/api/hybrid/video_data
       - GIN_MODE=release
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "https://tt.y2mate.biz.id/health"]
+      test: ["CMD", "wget", "--spider", "-q", "https://d.snaptik.fit/health"]
       interval: 30s
       timeout: 10s
       retries: 3

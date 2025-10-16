@@ -27,7 +27,7 @@ func (cfg *AppConfig) ContentType(mediaType string) (string, string, bool) {
 // with fallback to default values
 func LoadConfig() *AppConfig {
 	config := &AppConfig{
-		BaseURL:       getEnv("BASE_URL", "https://tt.y2mate.biz.id"),
+		BaseURL:       getEnv("BASE_URL", "https://d.snaptik.fit"),
 		EncryptionKey: getEnv("ENCRYPTION_KEY", "overflow"),
 		TempDir:       filepath.Join(".", "temp"),
 		HybridAPIURL:  getEnv("DOUYIN_API_URL", "http://douyin_tiktok_download_api:8000/api/hybrid/video_data"),

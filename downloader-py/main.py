@@ -23,7 +23,7 @@ from fastapi.middleware.gzip import GZipMiddleware  # Added for response compres
 from crypto import encrypt, decrypt
 
 # Constants
-BASE_URL = os.getenv("BASE_URL", "https://tt.y2mate.biz.id")  # From .env file
+BASE_URL = os.getenv("BASE_URL", "https://d.snaptik.fit")  # From .env file
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "overflow")  # Changed to use env var with fallback
 TEMP_DIR = os.path.join(os.getcwd(), "temp")
 HYBRID_API_URL = os.getenv("DOUYIN_API_URL", "http://douyin_tiktok_download_api:8000/api/hybrid/video_data")
