@@ -9,7 +9,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=6068
-      - BASE_URL=https://d.snaptik.fit  # Change this to your actual public URL in production
+      - BASE_URL=https://tt.ssstik.art  # Change this to your actual public URL in production
       - ENCRYPTION_KEY=overflow  # Change this to a secure key
       - DOUYIN_API_URL=http://douyin_tiktok_download_api:8000/api/hybrid/video_data  # Update this as needed
       - REDIS_URL=redis://redis:6379
