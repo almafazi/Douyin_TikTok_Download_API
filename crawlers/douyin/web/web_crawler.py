@@ -348,6 +348,26 @@ class DouyinWebCrawler:
         # 对于URL列表
         return await WebCastIdFetcher.get_all_webcast_id(urls)
 
+    async def update_cookie(self, cookie: str):
+        """
+        更新指定服务的Cookie
+        
+        Args:
+            service: 服务名称 (如: douyin_web)
+            cookie: 新的Cookie值
+        """
+        global config
+        service = "douyin"
+        print('DouyinWebCrawler before update', config["TokenManager"][service]["headers"]["Cookie"])
+        print('DouyinWebCrawler to update', cookie)
+        # 1. 更新内存中的配置（立即生效）
+        config["TokenManager"][service]["headers"]["Cookie"] = cookie
+        print('DouyinWebCrawler cookie updated', config["TokenManager"][service]["headers"]["Cookie"])
+        # 2. 写入配置文件（持久化）
+        config_path = f"{path}/config.yaml"
+        with open(config_path, 'w', encoding='utf-8') as file:
+            yaml.dump(config, file, default_flow_style=False, allow_unicode=True, indent=2)
+
     async def main(self):
         """-------------------------------------------------------handler接口列表-------------------------------------------------------"""
 
