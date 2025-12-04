@@ -35,26 +35,23 @@
 
 这些赞助商已付费放置在这里，**Douyin_TikTok_Download_API** 项目将永远免费且开源。如果您希望成为该项目的赞助商，请查看我的 [GitHub 赞助商页面](https://github.com/sponsors/evil0ctal)。
 
-<div align="center">
-    <a href="https://www.tikhub.io/" target="_blank">
-        <img src="https://tikhub.io/wp-content/uploads/2024/11/Main-Logo.webp" width="100" alt="TikHub.io - Global Social Data & API Marketplace">
-    </a>
-    <div>
-        <h2><b>TikHub.io</b></h2>
-        <p>Your Ultimate Social Media Data & API Marketplace</p>
-        <p>
-            Professional data solutions for Douyin, Xiaohongshu, TikTok, Instagram, YouTube, 
-            Twitter, and more.<br>
-            Real-time Data | Flexible APIs | Seamless Integration | Competitive Pricing with Discounts
-        </p>
-        <p>
-            <b>Discover TikHub.io Marketplace</b><br>
-            Buy and sell custom APIs, services, and social media solutions.<br>
-            Join a thriving ecosystem of developers, businesses, and content creators.
-        </p>
-        <p><em>Trusted by leading global influencer marketing and social media intelligence platforms</em></p>
-    </div>
-</div>
+<p align="center">
+  <a href="https://tikhub.io/?utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad">
+    <img style="border-radius:20px" width="845" height="845" alt="TikHub IO_Banner zh" src="https://github.com/user-attachments/assets/18ce4674-83b3-4312-a5d8-a45cf7cef7b2">
+  </a>
+</p>
+
+[TikHub](https://tikhub.io/?utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 提供超过 700 个端点，可用于从 14+ 个社交媒体平台获取与分析数据 —— 包括视频、用户、评论、商店、商品与趋势等，一站式完成所有数据访问与分析。
+
+通过每日签到，可以获取免费额度。可以使用我的注册邀请链接：[https://user.tikhub.io/users/signup?referral_code=1wRL8eQk](https://user.tikhub.io/users/signup?referral_code=1wRL8eQk&utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 或 邀请码：`1wRL8eQk`，注册并充值即可获得`$2`额度。
+
+[TikHub](https://tikhub.io/?utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 提供以下服务：
+
+- 丰富的数据接口
+- 每日签到免费获取额度
+- 高质量的API服务
+- 官网：[https://tikhub.io/](https://tikhub.io/?utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad)
+- GitHub地址：[https://github.com/TikHubIO/](https://github.com/TikHubIO/)
 
 
 ## 👻介绍
@@ -78,7 +75,9 @@
 
 ## 🔖TikHub.io API
 
-[TikHub.io](https://api.tikhub.io/)是一个API平台，提供包括Douyin、TikTok在内的各种公开数据接口，如果您想支持 [Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API) 项目的开发，我们强烈建议您选择[TikHub.io](https://api.tikhub.io/)。
+[TikHub.io](https://tikhub.io/?utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 提供超过 700 个端点，可用于从 14+ 个社交媒体平台获取与分析数据 —— 包括视频、用户、评论、商店、商品与趋势等，一站式完成所有数据访问与分析。
+
+如果您想支持 [Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API) 项目的开发，我们强烈建议您选择 [TikHub.io](https://tikhub.io/?utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad)。
 
 #### 特点：
 
@@ -88,7 +87,7 @@
 
 > 💰 成本优势
 
-不预设套餐限制，没有月度使用门槛，所有消费按实际使用量即时计费，并且根据用户每日的请求量进行阶梯式计费，同时可以通过每日签到在用户后台进行签到获取免费的额度，并且这些免费额度不会过期。
+不预设套餐限制，没有月度使用门槛，所有消费按实际使用量即时计费，并且根据用户每日的请求量进行阶梯式计费，同时可以通过每日签到在用户后台获取免费的额度，并且这些免费额度不会过期。
 
 > ⚡️ 快速支持
 
@@ -98,12 +97,16 @@
 
 TikHub的部分源代码会开源在Github上，并且会赞助一些开源项目的作者。
 
-#### 链接：
+#### 注册与使用：
 
-- Github: [TikHub Github](https://github.com/TikHubIO)
-- Discord: [TikHub Discord](https://discord.com/invite/aMEAS8Xsvz)
-- Register: [TikHub signup](https://beta-web.tikhub.io/en-us/users/signup)
-- API Docs: [TikHub API Docs](https://api.tikhub.io/)
+通过每日签到，可以获取免费额度。可以使用我的注册邀请链接：[https://user.tikhub.io/users/signup?referral_code=1wRL8eQk](https://user.tikhub.io/users/signup?referral_code=1wRL8eQk&utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 或 邀请码：`1wRL8eQk`，注册并充值即可获得`$2`额度。
+
+#### 相关链接：
+
+- 官网：[https://tikhub.io/](https://tikhub.io/?utm_source=github.com/Evil0ctal/Douyin_TikTok_Download_API&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad)
+- API 文档：[https://api.tikhub.io/docs](https://api.tikhub.io/docs)
+- GitHub：[https://github.com/TikHubIO/](https://github.com/TikHubIO/)
+- Discord：[https://discord.com/invite/aMEAS8Xsvz](https://discord.com/invite/aMEAS8Xsvz)
 
 ## 🖥演示站点: 我很脆弱...请勿压测(·•᷄ࡇ•᷅ ）
 
