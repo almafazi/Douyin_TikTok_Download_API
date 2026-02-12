@@ -2,78 +2,90 @@ import { escapeMarkdown } from './helpers.js';
 
 export const messages = {
   welcome: (username) => `
-🎬 *Selamat Datang di TikTok Downloader Bot!*
+🎬 *Welcome to TikTok Downloader Bot!*
 
-Halo ${escapeMarkdown(username)}! 👋
+Hello ${escapeMarkdown(username)}! 👋
 
-Kirimkan link TikTok untuk:
-• 📹 Download video tanpa watermark
-• 🎵 Download audio MP3
-• 🖼️ Download slideshow/foto
-• 🎬 Konversi slideshow ke video
+Send a TikTok link to:
+• 📹 Download TikTok videos without watermark
+• 🎵 Convert TikTok to MP3 audio
+• 🖼️ Download TikTok slideshow/photos
+• 🎬 Convert TikTok slideshow to video
 
-*Cara penggunaan:*
-1. Copy link TikTok
-2. Paste di chat ini
-3. Pilih format yang diinginkan
+*How to use:*
+1. Copy a TikTok link
+2. Paste it in this chat
+3. Choose your preferred format
 
 *Support:*
-• Video TikTok (HD/SD)
-• Slideshow/Foto
+• TikTok video (HD/SD)
+• Slideshow/Photo
 • Audio/MP3
 
-Ketik /help untuk bantuan lebih lanjut.
+Type /help for more details.
   `,
 
   help: () => `
-📖 *Panduan Penggunaan*
+📖 *User Guide*
 
-*Perintah:*
-/start - Memulai bot
-/help - Menampilkan bantuan
-/stats - Cek status API
+*Commands:*
+/start - Start the bot
+/help - Show help
+/stats - Check API status
 
-*Cara Download:*
-1. Buka TikTok app
-2. Tap "Share" pada video
-3. Pilih "Copy Link"
-4. Paste link di chat ini
-5. Pilih format download
+*How to download:*
+1. Open the TikTok app
+2. Tap "Share" on a video
+3. Choose "Copy Link"
+4. Paste the link in this chat
+5. Pick a download format
 
-*Format yang didukung:*
-• Video tanpa watermark (HD/SD)
-• Video dengan watermark
+*Supported formats:*
+• Video without watermark (HD/SD)
+• Video with watermark
 • Audio MP3
-• Slideshow (foto/video)
+• Slideshow (photo/video)
 
 *Tips:*
-• Gunakan HD untuk kualitas terbaik
-• Audio MP3 untuk ringtone
-• Slideshow video untuk story
+• Use HD for the best quality
+• Use MP3 audio for ringtones
+• Use slideshow video for stories
 
-Jika mengalami masalah, coba lagi beberapa saat.
+If you have issues, please try again in a few moments.
   `,
 
   processing: () => `
-⏳ *Sedang memproses...*
+⏳ *Processing...*
 
-Mengambil informasi video dari TikTok...
+Fetching TikTok video details...
+  `,
+
+  readyToDownload: () => `
+✅ *Ready to download!*
+
+Choose an option from the media card below.
   `,
 
   downloading: (type) => {
     const typeEmoji = type === 'mp3' ? '🎵' : '📹';
-    return `${typeEmoji} *Sedang mengunduh...*\n\nMohon tunggu, file sedang diproses...`;
+    return `${typeEmoji} *Downloading...*\n\nPlease wait, your file is being processed...`;
+  },
+
+  uploading: (type) => {
+    const typeEmoji = type === 'mp3' ? '🎵' : '📹';
+    const label = type === 'mp3' ? 'MP3 audio' : 'video';
+    return `${typeEmoji} *Uploading...*\n\nSending your ${label} to Telegram...`;
   },
 
   creatingSlideshow: () => `
-🎬 *Sedang membuat slideshow...*
+🎬 *Creating slideshow...*
 
-Menggabungkan foto dan audio...
-Ini membutuhkan waktu beberapa saat.
+Merging photos and audio...
+This may take a little time.
   `,
 
   videoInfo: ({ author, title, duration, views, likes, comments, shares }) => `
-🎬 *Video TikTok*
+🎬 *TikTok Video*
 
 👤 *Author:* ${escapeMarkdown(author)}
 📝 *Title:* ${escapeMarkdown(title)}
@@ -85,11 +97,11 @@ Ini membutuhkan waktu beberapa saat.
 💬 ${comments} comments
 🔄 ${shares} shares
 
-Pilih format download:
+Choose a download format:
   `,
 
   slideshowInfo: ({ author, title, photoCount, views, likes, comments }) => `
-🖼️ *Slideshow TikTok*
+🖼️ *TikTok Slideshow*
 
 👤 *Author:* ${escapeMarkdown(author)}
 📝 *Title:* ${escapeMarkdown(title)}
@@ -100,51 +112,52 @@ Pilih format download:
 ❤️ ${likes} likes
 💬 ${comments} comments
 
-Pilih format download:
+Choose a download format:
   `,
 
   downloadComplete: () => `
-✅ *Download selesai!*
+✅ *Download complete!*
 
-File berhasil diunduh dan dikirim.
+Your file was downloaded and sent successfully.
   `,
 
   slideshowComplete: () => `
-✅ *Slideshow selesai!*
+✅ *Slideshow complete!*
 
-Video slideshow berhasil dibuat.
+Your slideshow video was created successfully.
   `,
 
-  fileTooBig: (size) => `
-⚠️ *File terlalu besar!*
+  fileTooBig: (size, url) => `
+⚠️ File is too large!
 
-Ukuran file: ${size}
-Batas maksimal: 50MB
+File size: ${size}
+Maximum limit: 50MB
 
-Silakan download manual menggunakan link yang diberikan.
+Please download it manually using this link:
+${url}
   `,
 
   invalidUrl: () => `
-❌ *Link tidak valid!*
+❌ *Invalid link!*
 
-Pastikan kamu mengirim link TikTok yang benar.
+Please make sure you send a valid TikTok link.
 
-Contoh link yang valid:
+Examples of valid links:
 • https://tiktok.com/@username/video/123456
 • https://vm.tiktok.com/AbCdEfG
 
-Cara mendapatkan link:
-1. Buka video TikTok
-2. Tap tombol "Share"
-3. Pilih "Copy Link"
+How to get the link:
+1. Open a TikTok video
+2. Tap the "Share" button
+3. Select "Copy Link"
   `,
 
   error: (message) => `
-❌ *Terjadi kesalahan!*
+❌ *An error occurred!*
 
-${escapeMarkdown(message || 'Silakan coba lagi beberapa saat.')}
+${escapeMarkdown(message || 'Please try again in a few moments.')}
 
-Jika masalah berlanjut, ketik /stats untuk cek status API.
+If the problem continues, type /stats to check API status.
   `,
 
   stats: (health) => {
@@ -153,7 +166,7 @@ Jika masalah berlanjut, ketik /stats untuk cek status API.
     const fallbackEmoji = health.apis?.fallback === 'online' ? '🟢' : '🔴';
 
     return `
-📊 *Status API*
+📊 *API Status*
 
 ${statusEmoji} *Status:* ${health.status.toUpperCase()}
 🕐 *Time:* ${health.time}
@@ -162,7 +175,7 @@ ${statusEmoji} *Status:* ${health.status.toUpperCase()}
 ${primaryEmoji} Primary API: ${health.apis?.primary || 'unknown'}
 ${fallbackEmoji} Fallback API: ${health.apis?.fallback || 'unknown'}
 
-Jika API offline, coba lagi nanti.
+If the API is offline, please try again later.
     `;
   }
 };
