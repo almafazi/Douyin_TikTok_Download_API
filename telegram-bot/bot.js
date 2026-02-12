@@ -7,6 +7,7 @@ import { messages } from './utils/messages.js';
 
 dotenv.config();
 
+// 
 const logger = createLogger('Bot');
 
 // Config
