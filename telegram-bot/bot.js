@@ -7,6 +7,7 @@ import { messages } from './utils/messages.js';
 
 dotenv.config();
 
+// 
 const logger = createLogger('Bot');
 
 // Config
@@ -50,6 +51,44 @@ function getUrl(id) {
   return downloadUrls.get(id);
 }
 
+function sendMarkdownMessage(chatId, text, options = {}) {
+  return bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    disable_web_page_preview: true,
+    ...options
+  });
+}
+
+async function safeEditMarkdownMessage(chatId, messageId, text, options = {}) {
+  try {
+    await bot.editMessageText(text, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+      ...options
+    });
+  } catch (error) {
+    if (!error.message?.includes('message is not modified')) {
+      logger.error('Failed to edit markdown message:', error.message);
+    }
+  }
+}
+
+async function safeEditPlainMessage(chatId, messageId, text, options = {}) {
+  try {
+    await bot.editMessageText(text, {
+      chat_id: chatId,
+      message_id: messageId,
+      ...options
+    });
+  } catch (error) {
+    if (!error.message?.includes('message is not modified')) {
+      logger.error('Failed to edit plain message:', error.message);
+    }
+  }
+}
+
 // ============== COMMAND HANDLERS ==============
 
 // Start command
@@ -86,7 +125,7 @@ bot.onText(/\/stats/, async (msg) => {
     });
   } catch (error) {
     logger.error('Health check failed:', error.message);
-    await bot.sendMessage(chatId, messages.error('Gagal memeriksa status API'));
+    await sendMarkdownMessage(chatId, messages.error('Failed to check TikTok downloader API status'));
   }
 });
 
@@ -105,7 +144,7 @@ bot.on('message', async (msg) => {
   const match = text.match(tiktokRegex);
 
   if (!match) {
-    await bot.sendMessage(chatId, messages.invalidUrl());
+    await sendMarkdownMessage(chatId, messages.invalidUrl());
     return;
   }
 
@@ -113,9 +152,7 @@ bot.on('message', async (msg) => {
   logger.info(`Processing TikTok URL from ${chatId}: ${url}`);
 
   // Send processing message
-  const processingMsg = await bot.sendMessage(chatId, messages.processing(), {
-    parse_mode: 'Markdown'
-  });
+  const processingMsg = await sendMarkdownMessage(chatId, messages.processing());
 
   try {
     // Call API
@@ -124,27 +161,23 @@ bot.on('message', async (msg) => {
 
     logger.info(`API Response status: ${data.status}`);
 
-    // Delete processing message
-    try { await bot.deleteMessage(chatId, processingMsg.message_id); } catch (e) {}
-
     if (data.status === 'tunnel') {
+      await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.readyToDownload());
       // Video content
       await handleVideoDownload(chatId, data, msg);
     } else if (data.status === 'picker') {
+      await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.readyToDownload());
       // Image/Slideshow content
       await handleSlideshowDownload(chatId, data, url, msg);
     } else {
-      await bot.sendMessage(chatId, messages.error('Format tidak dikenali'));
+      await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.error('Unsupported TikTok content format'));
     }
 
   } catch (error) {
     logger.error('Error processing URL:', error.message);
 
-    // Safely delete processing message
-    try { await bot.deleteMessage(chatId, processingMsg.message_id); } catch (e) {}
-
     const errorMsg = error.response?.data?.error || error.message;
-    await bot.sendMessage(chatId, messages.error(errorMsg));
+    await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.error(errorMsg));
   }
 });
 
@@ -156,15 +189,17 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
 
   try {
-    await bot.answerCallbackQuery(query.id);
+    await bot.answerCallbackQuery(query.id, { text: 'Processing your request...' });
 
     if (data.startsWith('dl:')) {
-      const [, id] = data.split(':');
+      const [, second, third] = data.split(':');
+      const id = third || second;
       const url = getUrl(id);
       if (url) {
-        await handleDirectDownload(chatId, id, url, messageId);
+        const type = third ? second : (/mp3|audio/i.test(url) ? 'mp3' : 'video');
+        await handleDirectDownload(chatId, type, url, messageId);
       } else {
-        await bot.sendMessage(chatId, messages.error('Link expired, please send URL again'));
+        await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
     } else if (data.startsWith('ss:')) {
       const [, id] = data.split(':');
@@ -172,15 +207,15 @@ bot.on('callback_query', async (query) => {
       if (url) {
         await handleSlideshowVideoDownload(chatId, url, messageId);
       } else {
-        await bot.sendMessage(chatId, messages.error('Link expired, please send URL again'));
+        await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
     } else if (data === 'cancel') {
       await bot.deleteMessage(chatId, messageId);
-      await bot.sendMessage(chatId, '❌ Dibatalkan');
+      await bot.sendMessage(chatId, '❌ Canceled');
     }
   } catch (error) {
     logger.error('Callback query error:', error.message);
-    await bot.sendMessage(chatId, messages.error('Terjadi kesalahan'));
+    await sendMarkdownMessage(chatId, messages.error('An unexpected error occurred'));
   }
 });
 
@@ -243,7 +278,7 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
   logger.info(`Direct download requested`);
 
   // Send downloading message
-  const downloadingMsg = await bot.sendMessage(chatId, messages.downloading(type));
+  const downloadingMsg = await sendMarkdownMessage(chatId, messages.downloading(type));
 
   try {
     // Stream download from API
@@ -260,10 +295,11 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
 
     // Check file size (Telegram limit: 50MB for bots)
     if (fileSize > MAX_FILE_SIZE) {
-      try { await bot.deleteMessage(chatId, downloadingMsg.message_id); } catch (e) {}
-      await bot.sendMessage(
+      await safeEditPlainMessage(
         chatId,
-        messages.fileTooBig(formatNumber(fileSize))
+        downloadingMsg.message_id,
+        messages.fileTooBig(formatNumber(fileSize), downloadUrl),
+        { disable_web_page_preview: true }
       );
       return;
     }
@@ -276,9 +312,10 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
       if (match) filename = match[1];
     }
 
-    // Send file based on type
-    try { await bot.deleteMessage(chatId, downloadingMsg.message_id); } catch (e) {}
+    // Update progress before sending file
+    await safeEditMarkdownMessage(chatId, downloadingMsg.message_id, messages.uploading(type));
 
+    // Send file based on type
     if (type === 'mp3') {
       await bot.sendAudio(chatId, buffer, {
         title: filename,
@@ -291,12 +328,13 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
       });
     }
 
+    await safeEditMarkdownMessage(chatId, downloadingMsg.message_id, messages.downloadComplete());
+
     logger.info(`Download completed: ${filename} (${formatNumber(fileSize)} bytes)`);
 
   } catch (error) {
     logger.error('Download error:', error.message);
-    try { await bot.deleteMessage(chatId, downloadingMsg.message_id); } catch (e) {}
-    await bot.sendMessage(chatId, messages.error('Gagal mengunduh file'));
+    await safeEditMarkdownMessage(chatId, downloadingMsg.message_id, messages.error('Failed to download TikTok file'));
   }
 }
 
@@ -304,7 +342,7 @@ async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
   logger.info('Slideshow video download requested');
 
   // Send processing message
-  const processingMsg = await bot.sendMessage(chatId, messages.creatingSlideshow());
+  const processingMsg = await sendMarkdownMessage(chatId, messages.creatingSlideshow());
 
   try {
     // Build slideshow download URL
@@ -321,18 +359,19 @@ async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
 
     const buffer = Buffer.from(response.data);
 
-    try { await bot.deleteMessage(chatId, processingMsg.message_id); } catch (e) {}
+    await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.uploading('video'));
     await bot.sendVideo(chatId, buffer, {
       caption: messages.slideshowComplete(),
       supports_streaming: true
     });
 
+    await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.slideshowComplete());
+
     logger.info('Slideshow video sent successfully');
 
   } catch (error) {
     logger.error('Slideshow error:', error.message);
-    try { await bot.deleteMessage(chatId, processingMsg.message_id); } catch (e) {}
-    await bot.sendMessage(chatId, messages.error('Gagal membuat slideshow'));
+    await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.error('Failed to create TikTok slideshow video'));
   }
 }
 
@@ -345,21 +384,21 @@ function buildVideoKeyboard(downloadLinks) {
   if (downloadLinks.no_watermark_hd) {
     const id = storeUrl(downloadLinks.no_watermark_hd);
     keyboard.push([
-      { text: '📹 HD (No Watermark)', callback_data: `dl:${id}` }
+      { text: '📹 HD (No Watermark)', callback_data: `dl:video:${id}` }
     ]);
   }
 
   if (downloadLinks.no_watermark) {
     const id = storeUrl(downloadLinks.no_watermark);
     keyboard.push([
-      { text: '📹 SD (No Watermark)', callback_data: `dl:${id}` }
+      { text: '📹 SD (No Watermark)', callback_data: `dl:video:${id}` }
     ]);
   }
 
   if (downloadLinks.watermark) {
     const id = storeUrl(downloadLinks.watermark);
     keyboard.push([
-      { text: '📹 With Watermark', callback_data: `dl:${id}` }
+      { text: '📹 With Watermark', callback_data: `dl:video:${id}` }
     ]);
   }
 
@@ -367,7 +406,7 @@ function buildVideoKeyboard(downloadLinks) {
   if (downloadLinks.mp3) {
     const id = storeUrl(downloadLinks.mp3);
     keyboard.push([
-      { text: '🎵 Audio MP3', callback_data: `dl:${id}` }
+      { text: '🎵 Audio MP3', callback_data: `dl:mp3:${id}` }
     ]);
   }
 
@@ -389,7 +428,7 @@ function buildSlideshowKeyboard(downloadLinks, originalUrl) {
   if (downloadLinks.mp3) {
     const id = storeUrl(downloadLinks.mp3);
     keyboard.push([
-      { text: '🎵 Audio MP3', callback_data: `dl:${id}` }
+      { text: '🎵 Audio MP3', callback_data: `dl:mp3:${id}` }
     ]);
   }
 
