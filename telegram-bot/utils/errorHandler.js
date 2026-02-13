@@ -169,9 +169,18 @@ export async function safeEditMessage(bot, chatId, messageId, text, options = {}
       ...options
     });
   } catch (error) {
-    // Ignore "message not modified" errors
-    if (!error.message?.includes('message is not modified')) {
-      logger.error('Failed to edit message:', error.message);
+    const msg = error.message || '';
+    // Ignore known non-actionable errors
+    if (
+      msg.includes('message is not modified') ||
+      msg.includes('message to edit not found') ||
+      msg.includes('message can\'t be edited') ||
+      msg.includes('MESSAGE_ID_INVALID') ||
+      msg.includes('message to be edited was not found')
+    ) {
+      logger.debug('Message edit skipped:', msg);
+    } else {
+      logger.error('Failed to edit message:', msg);
     }
   }
 }

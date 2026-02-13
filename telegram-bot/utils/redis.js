@@ -50,7 +50,7 @@ const URL_PREFIX = 'url:';
 const URL_TTL = 3600; // 1 hour
 
 export async function storeUrl(url) {
-  const id = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const id = Math.random().toString(36).substr(2, 8);
   const key = `${URL_PREFIX}${id}`;
 
   try {
@@ -87,38 +87,53 @@ export async function deleteUrl(id) {
 // Rate Limiting
 const RATE_LIMIT_PREFIX = 'ratelimit:';
 
+// Lua script for atomic rate limiting (sliding window)
+const RATE_LIMIT_LUA = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window_start = tonumber(ARGV[2])
+local max_requests = tonumber(ARGV[3])
+local window_seconds = tonumber(ARGV[4])
+local unique_id = ARGV[5]
+
+redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
+local current_count = redis.call('ZCARD', key)
+
+if current_count >= max_requests then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  local reset_time = tonumber(oldest[2]) + window_seconds
+  return {0, 0, reset_time}
+end
+
+redis.call('ZADD', key, now, unique_id)
+redis.call('EXPIRE', key, window_seconds)
+
+local remaining = max_requests - current_count - 1
+return {1, remaining, now + window_seconds}
+`;
+
 export async function checkRateLimit(key, maxRequests, windowSeconds) {
   const fullKey = `${RATE_LIMIT_PREFIX}${key}`;
   const now = Math.floor(Date.now() / 1000);
   const windowStart = now - windowSeconds;
+  const uniqueId = `${now}_${Math.random().toString(36).substr(2, 6)}`;
 
   try {
-    // Remove old entries
-    await redis.zremrangebyscore(fullKey, 0, windowStart);
-
-    // Count current entries
-    const currentCount = await redis.zcard(fullKey);
-
-    if (currentCount >= maxRequests) {
-      const oldestTimestamp = await redis.zrange(fullKey, 0, 0, 'WITHSCORES');
-      const resetTime = parseInt(oldestTimestamp[1], 10) + windowSeconds;
-      return {
-        allowed: false,
-        remaining: 0,
-        resetTime
-      };
-    }
-
-    // Add new entry
-    await redis.zadd(fullKey, now, `${now}_${Math.random()}`);
-    await redis.expire(fullKey, windowSeconds);
-
-    const remaining = maxRequests - currentCount - 1;
+    const result = await redis.eval(
+      RATE_LIMIT_LUA,
+      1,
+      fullKey,
+      now,
+      windowStart,
+      maxRequests,
+      windowSeconds,
+      uniqueId
+    );
 
     return {
-      allowed: true,
-      remaining,
-      resetTime: now + windowSeconds
+      allowed: result[0] === 1,
+      remaining: result[1],
+      resetTime: result[2]
     };
   } catch (error) {
     logger.error('Rate limit check failed:', error.message);

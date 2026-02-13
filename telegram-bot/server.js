@@ -121,14 +121,5 @@ export function startServer(app, port = 3000) {
         resolve(server);
       }
     });
-
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      logger.info('SIGTERM received, closing server...');
-      server.close(() => {
-        logger.info('Server closed');
-        process.exit(0);
-      });
-    });
   });
 }

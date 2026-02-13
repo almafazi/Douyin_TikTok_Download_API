@@ -57,7 +57,7 @@ export function truncateText(text, maxLength = 100) {
 export function escapeMarkdown(text) {
   if (!text) return '';
   return text
-    .replace(/[_*\[\]()~`>#+=|{}.!-]/g, '\\$&');
+    .replace(/[_*`\[]/g, '\\$&');
 }
 
 /**

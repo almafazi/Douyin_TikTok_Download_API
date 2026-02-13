@@ -15,10 +15,21 @@ dotenv.config();
 // Logger
 const logger = createLogger('Bot');
 
+// Global error handlers
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', { reason: reason?.message || reason, stack: reason?.stack });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', { message: error.message, stack: error.stack });
+  process.exit(1);
+});
+
 // Config
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:6068';
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE) || 50 * 1024 * 1024; // 50MB
+const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 120000;
 const USE_WEBHOOK = process.env.USE_WEBHOOK === 'true';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 3000;
@@ -41,8 +52,14 @@ if (USE_WEBHOOK) {
 // API Client with retry
 const apiClient = createAxiosInstance({
   baseURL: API_BASE_URL,
-  timeout: 120000
+  timeout: API_TIMEOUT
 });
+
+// ============== VALIDATION HELPERS ==============
+
+function isValidId(id) {
+  return id !== undefined && id !== null && (typeof id === 'number' || (typeof id === 'string' && id.length > 0));
+}
 
 // ============== MESSAGE HELPERS ==============
 
@@ -52,6 +69,31 @@ function sendMarkdownMessage(chatId, text, options = {}) {
     disable_web_page_preview: true,
     ...options
   });
+}
+
+// ============== DOWNLOAD ERROR HELPER ==============
+
+async function handleDownloadError(error, chatId, messageId, fallbackUrl) {
+  logger.error('Download error:', error.message);
+
+  if (error.code === 'FILE_TOO_LARGE') {
+    await safeEditMessage(
+      bot,
+      chatId,
+      messageId,
+      messages.fileTooBig(formatNumber(error.contentLength), fallbackUrl),
+      { disable_web_page_preview: true }
+    );
+  } else {
+    const errorInfo = handleError(error);
+    await safeEditMessage(
+      bot,
+      chatId,
+      messageId,
+      messages.error(errorInfo.userMessage),
+      { parse_mode: 'Markdown', disable_web_page_preview: true }
+    );
+  }
 }
 
 // ============== RATE LIMIT MIDDLEWARE ==============
@@ -78,6 +120,7 @@ async function checkUserRateLimit(msg, type = 'command') {
 
 // Start command
 bot.onText(/\/start/, async (msg) => {
+  if (!isValidId(msg.chat?.id) || !isValidId(msg.from?.id)) return;
   if (!(await checkUserRateLimit(msg, 'command')).allowed) return;
 
   const chatId = msg.chat.id;
@@ -93,6 +136,7 @@ bot.onText(/\/start/, async (msg) => {
 
 // Help command
 bot.onText(/\/help/, async (msg) => {
+  if (!isValidId(msg.chat?.id) || !isValidId(msg.from?.id)) return;
   if (!(await checkUserRateLimit(msg, 'command')).allowed) return;
 
   const chatId = msg.chat.id;
@@ -103,6 +147,7 @@ bot.onText(/\/help/, async (msg) => {
 
 // Stats command
 bot.onText(/\/stats/, async (msg) => {
+  if (!isValidId(msg.chat?.id) || !isValidId(msg.from?.id)) return;
   if (!(await checkUserRateLimit(msg, 'command')).allowed) return;
 
   const chatId = msg.chat.id;
@@ -124,6 +169,7 @@ bot.onText(/\/stats/, async (msg) => {
 
 // Handle TikTok URLs
 bot.on('message', async (msg) => {
+  if (!isValidId(msg.chat?.id) || !isValidId(msg.from?.id)) return;
   if (!(await checkUserRateLimit(msg, 'process')).allowed) return;
 
   const chatId = msg.chat.id;
@@ -133,7 +179,7 @@ bot.on('message', async (msg) => {
   if (!text || text.startsWith('/')) return;
 
   // Check if it's a TikTok URL
-  const tiktokRegex = /(https?:\/\/)?(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)\/[^\s]+/i;
+  const tiktokRegex = /https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)\/[a-zA-Z0-9_\-\/@.?=&]+/;
   const match = text.match(tiktokRegex);
 
   if (!match) {
@@ -183,10 +229,14 @@ bot.on('message', async (msg) => {
 // ============== CALLBACK QUERY HANDLERS ==============
 
 bot.on('callback_query', async (query) => {
-  const chatId = query.message.chat.id;
-  const messageId = query.message.message_id;
+  const chatId = query.message?.chat?.id;
+  const messageId = query.message?.message_id;
   const data = query.data;
-  const userId = query.from.id;
+  const userId = query.from?.id;
+
+  if (!isValidId(chatId) || !isValidId(userId)) return;
+
+  logger.info(`Callback query from ${userId}: ${data}`);
 
   // Check rate limit for downloads
   const rateLimit = await isRateLimited(userId, 'download');
@@ -209,7 +259,7 @@ bot.on('callback_query', async (query) => {
 
       if (url) {
         const type = third ? second : (/mp3|audio/i.test(url) ? 'mp3' : 'video');
-        await handleDirectDownload(chatId, type, url, messageId);
+        await handleDirectDownload(chatId, type, url);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
@@ -218,7 +268,7 @@ bot.on('callback_query', async (query) => {
       const url = await getUrl(id);
 
       if (url) {
-        await handleSlideshowVideoDownload(chatId, url, messageId);
+        await handleSlideshowVideoDownload(chatId, url);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
@@ -227,7 +277,7 @@ bot.on('callback_query', async (query) => {
       const url = await getUrl(id);
 
       if (url) {
-        await handlePhotoDownload(chatId, url, messageId);
+        await handlePhotoDownload(chatId, url);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
@@ -297,23 +347,22 @@ async function handleSlideshowDownload(chatId, data) {
   });
 }
 
-async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
-  logger.info(`Direct download requested (streaming)`);
-
-  if (!(await checkUserRateLimit({ from: { id: chatId }, chat: { id: chatId } }, 'download')).allowed) {
-    return;
-  }
+async function handleDirectDownload(chatId, type, downloadUrl) {
+  logger.info(`Direct download requested: type=${type}, chatId=${chatId}`);
 
   // Send downloading message
   const downloadingMsg = await sendMarkdownMessage(chatId, messages.downloading(type));
 
+  let stream;
   try {
     // Stream download from API with streaming response
-    const { stream, headers } = await streamDownload({
+    const result = await streamDownload({
       method: 'GET',
       url: downloadUrl,
-      timeout: 120000
+      timeout: API_TIMEOUT
     }, MAX_FILE_SIZE);
+    stream = result.stream;
+    const { headers } = result;
 
     // Get filename from headers
     const filename = getFilenameFromHeaders(headers['content-disposition'], 'download');
@@ -343,35 +392,13 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
     logger.info(`Download completed: ${filename} (streamed)`);
 
   } catch (error) {
-    logger.error('Download error:', error.message);
-
-    if (error.code === 'FILE_TOO_LARGE') {
-      await safeEditMessage(
-        bot,
-        chatId,
-        downloadingMsg.message_id,
-        messages.fileTooBig(formatNumber(error.contentLength), downloadUrl),
-        { disable_web_page_preview: true }
-      );
-    } else {
-      const errorInfo = handleError(error);
-      await safeEditMessage(
-        bot,
-        chatId,
-        downloadingMsg.message_id,
-        messages.error(errorInfo.userMessage),
-        { parse_mode: 'Markdown', disable_web_page_preview: true }
-      );
-    }
+    if (stream && typeof stream.destroy === 'function') stream.destroy();
+    await handleDownloadError(error, chatId, downloadingMsg.message_id, downloadUrl);
   }
 }
 
-async function handlePhotoDownload(chatId, photoUrl, messageId) {
-  logger.info('Photo download requested');
-
-  if (!(await checkUserRateLimit({ from: { id: chatId }, chat: { id: chatId } }, 'download')).allowed) {
-    return;
-  }
+async function handlePhotoDownload(chatId, photoUrl) {
+  logger.info(`Photo download requested: chatId=${chatId}`);
 
   try {
     // Send photo directly using URL
@@ -387,21 +414,19 @@ async function handlePhotoDownload(chatId, photoUrl, messageId) {
   }
 }
 
-async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
-  logger.info('Slideshow video download requested (background processing)');
-
-  if (!(await checkUserRateLimit({ from: { id: chatId }, chat: { id: chatId } }, 'download')).allowed) {
-    return;
-  }
+async function handleSlideshowVideoDownload(chatId, encryptedUrl) {
+  logger.info(`Slideshow video download requested: chatId=${chatId}`);
 
   // Send queued message - processing will happen in background
   const queuedMsg = await sendMarkdownMessage(chatId, messages.slideshowQueued());
 
   // Process in background (non-blocking)
-  processSlideshowInBackground(chatId, encryptedUrl, queuedMsg.message_id);
+  processSlideshowInBackground(chatId, encryptedUrl, queuedMsg.message_id)
+    .catch(err => logger.error('Unhandled slideshow background error:', err.message));
 }
 
 async function processSlideshowInBackground(chatId, encryptedUrl, messageId) {
+  let stream;
   try {
     // Build slideshow download URL
     // encryptedUrl bisa berupa full URL atau token saja
@@ -412,11 +437,12 @@ async function processSlideshowInBackground(chatId, encryptedUrl, messageId) {
     // Download slideshow video with streaming
     // No timeout - let API handle the processing time
     logger.info(`Starting slideshow download from: ${slideshowUrl.substring(0, 100)}...`);
-    const { stream } = await streamDownload({
+    const result = await streamDownload({
       method: 'GET',
       url: slideshowUrl
       // No timeout specified - API handles retry and timeout internally
     }, MAX_FILE_SIZE);
+    stream = result.stream;
 
     // Send video using stream - no buffer in memory!
     await bot.sendVideo(chatId, stream, {
@@ -432,6 +458,8 @@ async function processSlideshowInBackground(chatId, encryptedUrl, messageId) {
     logger.info('Slideshow video sent successfully (background)');
 
   } catch (error) {
+    if (stream && typeof stream.destroy === 'function') stream.destroy();
+
     logger.error('Background slideshow error:', {
       message: error.message,
       code: error.code,
@@ -462,24 +490,7 @@ Or try again later.`,
       return;
     }
 
-    if (error.code === 'FILE_TOO_LARGE') {
-      await safeEditMessage(
-        bot,
-        chatId,
-        messageId,
-        messages.fileTooBig(formatNumber(error.contentLength), encryptedUrl),
-        { disable_web_page_preview: true }
-      );
-    } else {
-      const errorInfo = handleError(error);
-      await safeEditMessage(
-        bot,
-        chatId,
-        messageId,
-        messages.error(errorInfo.userMessage),
-        { parse_mode: 'Markdown', disable_web_page_preview: true }
-      );
-    }
+    await handleDownloadError(error, chatId, messageId, encryptedUrl);
   }
 }
 
@@ -512,7 +523,8 @@ async function startBot() {
       const fullWebhookUrl = `${WEBHOOK_URL}${webhookPath}`;
 
       await bot.setWebHook(fullWebhookUrl);
-      logger.info(`Webhook set to: ${fullWebhookUrl}`);
+      const maskedUrl = fullWebhookUrl.replace(TOKEN, TOKEN.slice(0, 5) + '...' + TOKEN.slice(-4));
+      logger.info(`Webhook set to: ${maskedUrl}`);
     }
 
     logger.info('Bot is running...');

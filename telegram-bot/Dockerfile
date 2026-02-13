@@ -33,6 +33,7 @@ RUN npm ci --only=production && npm cache clean --force
 # Copy app source from builder
 COPY --from=builder /app/bot.js ./
 COPY --from=builder /app/server.js ./
+COPY --from=builder /app/healthcheck.js ./
 COPY --from=builder /app/utils ./utils
 
 # Create non-root user
