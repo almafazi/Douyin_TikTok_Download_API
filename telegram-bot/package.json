@@ -1,16 +1,20 @@
 {
   "name": "tiktok-telegram-bot",
-  "version": "1.0.0",
-  "description": "TikTok Downloader Telegram Bot - Connects to downloader-bun API",
+  "version": "2.0.0",
+  "description": "TikTok Downloader Telegram Bot - Production Grade with Redis",
   "main": "bot.js",
   "type": "module",
   "scripts": {
     "start": "node bot.js",
-    "dev": "nodemon bot.js"
+    "dev": "nodemon bot.js",
+    "health": "node healthcheck.js"
   },
   "dependencies": {
     "axios": "^1.6.0",
+    "axios-retry": "^4.0.0",
     "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "ioredis": "^5.3.2",
     "node-telegram-bot-api": "^0.64.0",
     "pino": "^8.16.0",
     "pino-pretty": "^10.2.0"
@@ -22,7 +26,8 @@
     "telegram",
     "bot",
     "tiktok",
-    "downloader"
+    "downloader",
+    "redis"
   ],
   "author": "",
   "license": "MIT"
