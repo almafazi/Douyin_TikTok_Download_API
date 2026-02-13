@@ -275,32 +275,31 @@ async function handleSlideshowDownload(chatId, data, originalUrl, originalMsg) {
 }
 
 async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
-  logger.info(`Direct download requested`);
+  logger.info(`Direct download requested (streaming)`);
 
   // Send downloading message
   const downloadingMsg = await sendMarkdownMessage(chatId, messages.downloading(type));
 
   try {
-    // Stream download from API
+    // Stream download from API with streaming response
     const response = await axios({
       method: 'GET',
       url: downloadUrl,
-      responseType: 'arraybuffer',
+      responseType: 'stream',
       timeout: 120000,
       maxContentLength: MAX_FILE_SIZE
     });
 
-    const buffer = Buffer.from(response.data);
-    const fileSize = buffer.length;
-
-    // Check file size (Telegram limit: 50MB for bots)
-    if (fileSize > MAX_FILE_SIZE) {
+    // Check file size from headers
+    const contentLength = parseInt(response.headers['content-length'], 10);
+    if (contentLength && contentLength > MAX_FILE_SIZE) {
       await safeEditPlainMessage(
         chatId,
         downloadingMsg.message_id,
-        messages.fileTooBig(formatNumber(fileSize), downloadUrl),
+        messages.fileTooBig(formatNumber(contentLength), downloadUrl),
         { disable_web_page_preview: true }
       );
+      response.data.destroy(); // Clean up stream
       return;
     }
 
@@ -315,14 +314,14 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
     // Update progress before sending file
     await safeEditMarkdownMessage(chatId, downloadingMsg.message_id, messages.uploading(type));
 
-    // Send file based on type
+    // Send file using stream - no buffer in memory!
     if (type === 'mp3') {
-      await bot.sendAudio(chatId, buffer, {
+      await bot.sendAudio(chatId, response.data, {
         title: filename,
         performer: 'TikTok Audio'
       });
     } else {
-      await bot.sendVideo(chatId, buffer, {
+      await bot.sendVideo(chatId, response.data, {
         caption: messages.downloadComplete(),
         supports_streaming: true
       });
@@ -330,7 +329,7 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
 
     await safeEditMarkdownMessage(chatId, downloadingMsg.message_id, messages.downloadComplete());
 
-    logger.info(`Download completed: ${filename} (${formatNumber(fileSize)} bytes)`);
+    logger.info(`Download completed: ${filename} (streamed)`);
 
   } catch (error) {
     logger.error('Download error:', error.message);
@@ -339,7 +338,7 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
 }
 
 async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
-  logger.info('Slideshow video download requested');
+  logger.info('Slideshow video download requested (streaming)');
 
   // Send processing message
   const processingMsg = await sendMarkdownMessage(chatId, messages.creatingSlideshow());
@@ -348,26 +347,39 @@ async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
     // Build slideshow download URL
     const slideshowUrl = `${API_BASE_URL}/download-slideshow?url=${encodeURIComponent(encryptedUrl)}`;
 
-    // Download slideshow video
+    // Download slideshow video with streaming
     const response = await axios({
       method: 'GET',
       url: slideshowUrl,
-      responseType: 'arraybuffer',
+      responseType: 'stream',
       timeout: 300000, // 5 minutes for slideshow creation
       maxContentLength: MAX_FILE_SIZE
     });
 
-    const buffer = Buffer.from(response.data);
+    // Check file size from headers
+    const contentLength = parseInt(response.headers['content-length'], 10);
+    if (contentLength && contentLength > MAX_FILE_SIZE) {
+      await safeEditPlainMessage(
+        chatId,
+        processingMsg.message_id,
+        messages.fileTooBig(formatNumber(contentLength), slideshowUrl),
+        { disable_web_page_preview: true }
+      );
+      response.data.destroy(); // Clean up stream
+      return;
+    }
 
     await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.uploading('video'));
-    await bot.sendVideo(chatId, buffer, {
+
+    // Send video using stream - no buffer in memory!
+    await bot.sendVideo(chatId, response.data, {
       caption: messages.slideshowComplete(),
       supports_streaming: true
     });
 
     await safeEditMarkdownMessage(chatId, processingMsg.message_id, messages.slideshowComplete());
 
-    logger.info('Slideshow video sent successfully');
+    logger.info('Slideshow video sent successfully (streamed)');
 
   } catch (error) {
     logger.error('Slideshow error:', error.message);
