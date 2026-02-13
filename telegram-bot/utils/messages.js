@@ -84,6 +84,15 @@ Merging photos and audio...
 This may take a little time.
   `,
 
+  slideshowQueued: () => `
+🎬 *Slideshow is being processed...*
+
+Your slideshow video is being created in the background.
+This may take 2-3 minutes depending on the number of photos.
+
+⏳ Please wait, the video will be sent automatically when ready.
+  `,
+
   videoInfo: ({ author, title, duration, views, likes, comments, shares }) => `
 🎬 *TikTok Video*
 

@@ -161,7 +161,7 @@ bot.on('message', async (msg) => {
     } else if (data.status === 'picker') {
       await safeEditMessage(bot, chatId, processingMsg.message_id, messages.readyToDownload());
       // Image/Slideshow content
-      await handleSlideshowDownload(chatId, data, url, msg);
+      await handleSlideshowDownload(chatId, data);
     } else {
       await safeEditMessage(bot, chatId, processingMsg.message_id, messages.error('Unsupported TikTok content format'));
     }
@@ -222,6 +222,15 @@ bot.on('callback_query', async (query) => {
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
+    } else if (data.startsWith('photo:')) {
+      const [, id] = data.split(':');
+      const url = await getUrl(id);
+
+      if (url) {
+        await handlePhotoDownload(chatId, url, messageId);
+      } else {
+        await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
+      }
     } else if (data === 'cancel') {
       await safeDeleteMessage(bot, chatId, messageId);
       await bot.sendMessage(chatId, '❌ Canceled');
@@ -262,8 +271,8 @@ async function handleVideoDownload(chatId, data, originalMsg) {
   });
 }
 
-async function handleSlideshowDownload(chatId, data, originalUrl, originalMsg) {
-  const { title, description, statistics, author, photos, download_link, cover } = data;
+async function handleSlideshowDownload(chatId, data) {
+  const { title, description, statistics, author, photos, download_link, download_slideshow_link, cover } = data;
 
   // Build caption
   const caption = messages.slideshowInfo({
@@ -276,7 +285,7 @@ async function handleSlideshowDownload(chatId, data, originalUrl, originalMsg) {
   });
 
   // Build inline keyboard with short IDs
-  const keyboard = await buildSlideshowKeyboard(download_link, originalUrl);
+  const keyboard = await buildSlideshowKeyboard(download_link, download_slideshow_link, photos);
 
   // Send info with cover
   await bot.sendPhoto(chatId, cover, {
@@ -357,30 +366,57 @@ async function handleDirectDownload(chatId, type, downloadUrl, messageId) {
   }
 }
 
-async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
-  logger.info('Slideshow video download requested (streaming)');
+async function handlePhotoDownload(chatId, photoUrl, messageId) {
+  logger.info('Photo download requested');
 
   if (!(await checkUserRateLimit({ from: { id: chatId }, chat: { id: chatId } }, 'download')).allowed) {
     return;
   }
 
-  // Send processing message
-  const processingMsg = await sendMarkdownMessage(chatId, messages.creatingSlideshow());
+  try {
+    // Send photo directly using URL
+    await bot.sendPhoto(chatId, photoUrl, {
+      caption: messages.downloadComplete()
+    });
 
+    logger.info('Photo sent successfully');
+  } catch (error) {
+    logger.error('Photo download error:', error.message);
+    const errorInfo = handleError(error);
+    await sendMarkdownMessage(chatId, messages.error(errorInfo.userMessage));
+  }
+}
+
+async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
+  logger.info('Slideshow video download requested (background processing)');
+
+  if (!(await checkUserRateLimit({ from: { id: chatId }, chat: { id: chatId } }, 'download')).allowed) {
+    return;
+  }
+
+  // Send queued message - processing will happen in background
+  const queuedMsg = await sendMarkdownMessage(chatId, messages.slideshowQueued());
+
+  // Process in background (non-blocking)
+  processSlideshowInBackground(chatId, encryptedUrl, queuedMsg.message_id);
+}
+
+async function processSlideshowInBackground(chatId, encryptedUrl, messageId) {
   try {
     // Build slideshow download URL
-    const slideshowUrl = `${API_BASE_URL}/download-slideshow?url=${encodeURIComponent(encryptedUrl)}`;
+    // encryptedUrl bisa berupa full URL atau token saja
+    const slideshowUrl = encryptedUrl.startsWith('http')
+      ? encryptedUrl
+      : `${API_BASE_URL}/download-slideshow?url=${encodeURIComponent(encryptedUrl)}`;
 
     // Download slideshow video with streaming
-    const { stream, headers } = await streamDownload({
+    // No timeout - let API handle the processing time
+    logger.info(`Starting slideshow download from: ${slideshowUrl.substring(0, 100)}...`);
+    const { stream } = await streamDownload({
       method: 'GET',
-      url: slideshowUrl,
-      timeout: 300000 // 5 minutes for slideshow creation
+      url: slideshowUrl
+      // No timeout specified - API handles retry and timeout internally
     }, MAX_FILE_SIZE);
-
-    await safeEditMessage(bot, chatId, processingMsg.message_id, messages.uploading('video'), {
-      parse_mode: 'Markdown'
-    });
 
     // Send video using stream - no buffer in memory!
     await bot.sendVideo(chatId, stream, {
@@ -388,20 +424,49 @@ async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
       supports_streaming: true
     });
 
-    await safeEditMessage(bot, chatId, processingMsg.message_id, messages.slideshowComplete(), {
+    // Update the queued message to complete
+    await safeEditMessage(bot, chatId, messageId, messages.slideshowComplete(), {
       parse_mode: 'Markdown'
     });
 
-    logger.info('Slideshow video sent successfully (streamed)');
+    logger.info('Slideshow video sent successfully (background)');
 
   } catch (error) {
-    logger.error('Slideshow error:', error.message);
+    logger.error('Background slideshow error:', {
+      message: error.message,
+      code: error.code,
+      response: error.response?.data,
+      status: error.response?.status,
+      stack: error.stack
+    });
+
+    // Fallback: provide manual download link if API fails
+    if (error.response?.status >= 500 || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+      const manualUrl = encryptedUrl.startsWith('http')
+        ? encryptedUrl
+        : `${API_BASE_URL}/download-slideshow?url=${encodeURIComponent(encryptedUrl)}`;
+      await safeEditMessage(
+        bot,
+        chatId,
+        messageId,
+        `⚠️ *Slideshow creation failed*
+
+The server is taking too long to process.
+
+You can download manually using this link:
+${manualUrl}
+
+Or try again later.`,
+        { parse_mode: 'Markdown', disable_web_page_preview: true }
+      );
+      return;
+    }
 
     if (error.code === 'FILE_TOO_LARGE') {
       await safeEditMessage(
         bot,
         chatId,
-        processingMsg.message_id,
+        messageId,
         messages.fileTooBig(formatNumber(error.contentLength), encryptedUrl),
         { disable_web_page_preview: true }
       );
@@ -410,7 +475,7 @@ async function handleSlideshowVideoDownload(chatId, encryptedUrl, messageId) {
       await safeEditMessage(
         bot,
         chatId,
-        processingMsg.message_id,
+        messageId,
         messages.error(errorInfo.userMessage),
         { parse_mode: 'Markdown', disable_web_page_preview: true }
       );

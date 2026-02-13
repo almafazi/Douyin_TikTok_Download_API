@@ -4,28 +4,9 @@ import { createLogger } from './logger.js';
 
 const logger = createLogger('Axios');
 
-// Default retry configuration
+// Retry is disabled - API handles retry internally
 const defaultRetryConfig = {
-  retries: 3,
-  retryDelay: (retryCount) => {
-    const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
-    logger.info(`Retrying request, attempt ${retryCount}, delay ${delay}ms`);
-    return delay;
-  },
-  retryCondition: (error) => {
-    // Retry on network errors or 5xx responses
-    const shouldRetry = axiosRetry.isNetworkOrIdempotentRequestError(error) ||
-      (error.response?.status >= 500 && error.response?.status < 600);
-
-    if (shouldRetry) {
-      logger.warn(`Retry condition met: ${error.message}`);
-    }
-
-    return shouldRetry;
-  },
-  onRetry: (retryCount, error, requestConfig) => {
-    logger.warn(`Retry ${retryCount} for ${requestConfig.method?.toUpperCase()} ${requestConfig.url}: ${error.message}`);
-  }
+  retries: 0 // No retry on bot side
 };
 
 /**

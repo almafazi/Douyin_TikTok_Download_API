@@ -44,15 +44,27 @@ export async function buildVideoKeyboard(downloadLinks) {
 /**
  * Build slideshow download keyboard
  * @param {Object} downloadLinks - Download links object
- * @param {string} originalUrl - Original TikTok URL
+ * @param {string} slideshowUrl - Slideshow download URL
+ * @param {Array} photos - Array of photo URLs
  * @returns {Promise<Array>}
  */
-export async function buildSlideshowKeyboard(downloadLinks, originalUrl) {
+export async function buildSlideshowKeyboard(downloadLinks, slideshowUrl, photos) {
   const keyboard = [];
 
+  // Individual photo download buttons
+  if (photos && photos.length > 0) {
+    for (let i = 0; i < photos.length; i++) {
+      const photo = photos[i];
+      const id = await storeUrl(photo.url);
+      keyboard.push([
+        { text: `📷 Download Photo ${i + 1}`, callback_data: `photo:${id}` }
+      ]);
+    }
+  }
+
   // Slideshow video option
-  if (downloadLinks.slideshow) {
-    const id = await storeUrl(originalUrl);
+  if (slideshowUrl) {
+    const id = await storeUrl(slideshowUrl);
     keyboard.push([
       { text: '🎬 Download as Video', callback_data: `ss:${id}` }
     ]);

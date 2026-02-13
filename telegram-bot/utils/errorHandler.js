@@ -29,7 +29,7 @@ const userErrorMessages = {
   [ErrorTypes.VALIDATION]: 'Invalid input. Please check your request and try again.',
   [ErrorTypes.RATE_LIMIT]: 'You are sending requests too quickly. Please wait a moment.',
   [ErrorTypes.DOWNLOAD]: 'Failed to download the file. The link may have expired.',
-  [ErrorTypes.API]: 'The download service is temporarily unavailable. Please try again later.',
+  [ErrorTypes.API]: 'The download is unavailable at the moment, or your TikTok URL may be incorrect.',
   [ErrorTypes.STREAM]: 'Error while transferring the file. Please try again.',
   [ErrorTypes.FILE_TOO_LARGE]: 'The file is too large to send via Telegram.',
   [ErrorTypes.NETWORK]: 'Network error. Please check your connection and try again.',
