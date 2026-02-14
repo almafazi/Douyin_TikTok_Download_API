@@ -1,6 +1,6 @@
 # TikTok Downloader Telegram Bot
 
-Bot Telegram untuk download video TikTok tanpa watermark, audio MP3, dan slideshow.
+Bot Telegram untuk download video TikTok tanpa watermark, audio MP3, dan slideshow. Dilengkapi dengan Analytics Dashboard lengkap.
 
 ## Features
 
@@ -11,6 +11,7 @@ Bot Telegram untuk download video TikTok tanpa watermark, audio MP3, dan slidesh
 - 📊 Info lengkap video (views, likes, comments)
 - ⚡ Progress indicator
 - 🔄 Fallback otomatis
+- 📈 **Analytics Dashboard** - Track penggunaan bot real-time
 
 ## Prerequisites
 
@@ -53,6 +54,20 @@ npm start
 | `/start` | Memulai bot |
 | `/help` | Panduan penggunaan |
 | `/stats` | Cek status API |
+| `/adminstats` | Analytics summary (admin only) |
+
+## Analytics Dashboard
+
+Bot dilengkapi dengan dashboard analytics lengkap yang dapat diakses di:
+- **URL**: `http://your-server:3001`
+- **Features**:
+  - 📊 Statistik real-time (Total Users, Active Users, Downloads, Success Rate)
+  - 📈 Grafik downloads trend (24h, 7d, 30d)
+  - 🥧 Breakdown content type (Video, Audio, Slideshow, Photo)
+  - 📊 Command usage statistics
+  - 👑 Top users leaderboard
+  - 🚨 Recent errors log
+  - ⏱️ Auto-refresh setiap 30 detik
 
 ## Usage
 
@@ -80,13 +95,37 @@ docker run -d \
 
 ```
 telegram-bot/
-├── bot.js              # Main bot logic
+├── bot.js                      # Main bot logic
+├── server.js                   # Express server
+├── analytics/
+│   ├── connection.js           # MongoDB connection
+│   ├── models/
+│   │   ├── User.js             # User tracking schema
+│   │   ├── Download.js         # Download events schema
+│   │   ├── Command.js          # Command usage schema
+│   │   └── Error.js            # Error tracking schema
+│   ├── services/
+│   │   └── analyticsService.js # Analytics tracking service
+│   └── dashboard/
+│       ├── server.js           # Dashboard Express server
+│       ├── routes/
+│       │   └── api.js          # Dashboard API endpoints
+│       └── public/
+│           ├── index.html      # Dashboard UI
+│           ├── style.css       # Dashboard styling
+│           └── app.js          # Dashboard logic & charts
 ├── utils/
-│   ├── helpers.js      # Helper functions
-│   ├── logger.js       # Logger config
-│   └── messages.js     # Bot messages
-├── package.json
+│   ├── helpers.js              # Helper functions
+│   ├── logger.js               # Logger config
+│   ├── messages.js             # Bot messages
+│   ├── redis.js                # Redis connection
+│   ├── rateLimiter.js          # Rate limiting
+│   ├── axiosConfig.js          # Axios configuration
+│   ├── errorHandler.js         # Error handling
+│   └── keyboard.js             # Bot keyboards
+├── docker-compose.yml
 ├── Dockerfile
+├── package.json
 ├── .env.example
 └── README.md
 ```
@@ -99,6 +138,14 @@ telegram-bot/
 | `API_BASE_URL` | No | http://localhost:6068 | URL API downloader |
 | `MAX_FILE_SIZE` | No | 52428800 | Batas ukuran file (bytes) |
 | `LOG_LEVEL` | No | info | Level logging |
+| `MONGO_ROOT_PASSWORD` | Yes* | changeme | Password MongoDB root user |
+| `MONGODB_URI` | Yes* | - | MongoDB connection string |
+| `ANALYTICS_ENABLED` | No | true | Enable/disable analytics |
+| `ADMIN_USER_ID` | Yes* | - | Telegram user ID admin |
+| `DASHBOARD_PORT` | No | 3001 | Port untuk analytics dashboard |
+| `DASHBOARD_PUBLIC` | No | true | Dashboard access public/private |
+
+*Required untuk analytics features
 
 ## License
 

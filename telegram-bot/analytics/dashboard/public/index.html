@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TikTok Bot Analytics</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📊 TikTok Downloader Bot Analytics</h1>
+      <div class="period-selector">
+        <button class="period-btn active" data-period="24h">24 Hours</button>
+        <button class="period-btn" data-period="7d">7 Days</button>
+        <button class="period-btn" data-period="30d">30 Days</button>
+      </div>
+    </header>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-info">
+          <div class="stat-value" id="totalUsers">-</div>
+          <div class="stat-label">Total Users</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon">🟢</div>
+        <div class="stat-info">
+          <div class="stat-value" id="activeUsers">-</div>
+          <div class="stat-label">Active Users</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon">⬇️</div>
+        <div class="stat-info">
+          <div class="stat-value" id="totalDownloads">-</div>
+          <div class="stat-label">Downloads</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon">✅</div>
+        <div class="stat-info">
+          <div class="stat-value" id="successRate">-</div>
+          <div class="stat-label">Success Rate</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-container">
+        <h2>📈 Downloads Trend</h2>
+        <canvas id="downloadsChart"></canvas>
+      </div>
+
+      <div class="chart-container">
+        <h2>🥧 Content Types</h2>
+        <canvas id="contentTypeChart"></canvas>
+      </div>
+
+      <div class="chart-container">
+        <h2>📊 Commands</h2>
+        <canvas id="commandsChart"></canvas>
+      </div>
+
+      <div class="chart-container">
+        <h2>👑 Top Users</h2>
+        <div id="topUsersList" class="top-users-list">
+          <div class="loading">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="errors-section">
+      <h2>🚨 Recent Errors</h2>
+      <div id="errorsList" class="errors-list">
+        <div class="loading">Loading...</div>
+      </div>
+    </div>
+
+    <footer>
+      <p>Last updated: <span id="lastUpdated">-</span></p>
+      <p class="auto-refresh">Auto-refresh: <span id="countdown">30</s> seconds</p>
+    </footer>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

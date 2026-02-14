@@ -35,6 +35,7 @@ COPY --from=builder /app/bot.js ./
 COPY --from=builder /app/server.js ./
 COPY --from=builder /app/healthcheck.js ./
 COPY --from=builder /app/utils ./utils
+COPY --from=builder /app/analytics ./analytics
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -44,8 +45,8 @@ RUN addgroup -g 1001 -S nodejs && \
 RUN chown -R botuser:nodejs /app
 USER botuser
 
-# Expose port for health checks and webhooks
-EXPOSE 3000
+# Expose ports for health checks, webhooks, and dashboard
+EXPOSE 3000 3001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

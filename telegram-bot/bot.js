@@ -9,6 +9,9 @@ import { createAxiosInstance, streamDownload, getFilenameFromHeaders } from './u
 import { handleError, safeEditMessage, safeDeleteMessage, ErrorTypes, BotError } from './utils/errorHandler.js';
 import { buildVideoKeyboard, buildSlideshowKeyboard } from './utils/keyboard.js';
 import { createServer, startServer } from './server.js';
+import { connectMongoDB, closeMongoDB } from './analytics/connection.js';
+import { analyticsService } from './analytics/services/analyticsService.js';
+import { createDashboardServer, startDashboardServer } from './analytics/dashboard/server.js';
 
 dotenv.config();
 
@@ -33,6 +36,7 @@ const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 120000;
 const USE_WEBHOOK = process.env.USE_WEBHOOK === 'true';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 3000;
+const ADMIN_USER_ID = process.env.ADMIN_USER_ID;
 
 if (!TOKEN) {
   logger.error('TELEGRAM_BOT_TOKEN is required!');
@@ -124,9 +128,14 @@ bot.onText(/\/start/, async (msg) => {
   if (!(await checkUserRateLimit(msg, 'command')).allowed) return;
 
   const chatId = msg.chat.id;
+  const userId = msg.from.id;
   const username = msg.from.username || msg.from.first_name;
+  const startTime = Date.now();
 
   logger.info(`User ${username} (${chatId}) started the bot`);
+
+  await analyticsService.trackUser(msg);
+  await analyticsService.trackCommand(userId, 'start', Date.now() - startTime);
 
   await bot.sendMessage(chatId, messages.welcome(username), {
     parse_mode: 'Markdown',
@@ -140,6 +149,12 @@ bot.onText(/\/help/, async (msg) => {
   if (!(await checkUserRateLimit(msg, 'command')).allowed) return;
 
   const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const startTime = Date.now();
+
+  await analyticsService.trackUser(msg);
+  await analyticsService.trackCommand(userId, 'help', Date.now() - startTime);
+
   await bot.sendMessage(chatId, messages.help(), {
     parse_mode: 'Markdown'
   });
@@ -151,17 +166,63 @@ bot.onText(/\/stats/, async (msg) => {
   if (!(await checkUserRateLimit(msg, 'command')).allowed) return;
 
   const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const startTime = Date.now();
+
+  await analyticsService.trackUser(msg);
 
   try {
     const response = await apiClient.get('/health');
     const health = response.data;
 
+    await analyticsService.trackCommand(userId, 'stats', Date.now() - startTime);
     await bot.sendMessage(chatId, messages.stats(health), {
       parse_mode: 'Markdown'
     });
   } catch (error) {
     logger.error('Health check failed:', error.message);
+    await analyticsService.trackError(error, { userId, command: 'stats' });
     await sendMarkdownMessage(chatId, messages.error('Failed to check TikTok downloader API status'));
+  }
+});
+
+// Admin Stats command
+bot.onText(/\/adminstats/, async (msg) => {
+  if (!isValidId(msg.chat?.id) || !isValidId(msg.from?.id)) return;
+
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  // Check if user is admin
+  if (!ADMIN_USER_ID || userId.toString() !== ADMIN_USER_ID) {
+    await sendMarkdownMessage(chatId, '❌ *Access Denied*\n\nThis command is only for administrators.');
+    return;
+  }
+
+  try {
+    const stats = await analyticsService.getStats('24h');
+
+    const message = `📊 *Analytics Summary (24h)*
+
+👥 *Total Users:* ${stats.totalUsers}
+🟢 *Active Users:* ${stats.activeUsers}
+⬇️ *Downloads:* ${stats.totalDownloads}
+✅ *Success Rate:* ${stats.successRate}%
+⌨️ *Commands:* ${stats.totalCommands}
+🚨 *Errors:* ${stats.recentErrors}
+
+📈 *By Content Type:*`;
+
+    const byType = await analyticsService.getDownloadsByType('24h');
+    let typeMessage = message;
+    byType.forEach(item => {
+      typeMessage += `\n  • ${item._id}: ${item.count}`;
+    });
+
+    await sendMarkdownMessage(chatId, typeMessage);
+  } catch (error) {
+    logger.error('Admin stats error:', error.message);
+    await sendMarkdownMessage(chatId, messages.error('Failed to get analytics data'));
   }
 });
 
@@ -173,6 +234,7 @@ bot.on('message', async (msg) => {
   if (!(await checkUserRateLimit(msg, 'process')).allowed) return;
 
   const chatId = msg.chat.id;
+  const userId = msg.from.id;
   const text = msg.text;
 
   // Skip commands
@@ -188,7 +250,12 @@ bot.on('message', async (msg) => {
   }
 
   const url = match[0];
+  const startTime = Date.now();
+
   logger.info(`Processing TikTok URL from ${chatId}: ${url}`);
+
+  // Track user and command
+  await analyticsService.trackUser(msg);
 
   // Send processing message
   const processingMsg = await sendMarkdownMessage(chatId, messages.processing());
@@ -214,6 +281,13 @@ bot.on('message', async (msg) => {
 
   } catch (error) {
     logger.error('Error processing URL:', error.message);
+
+    // Track error
+    await analyticsService.trackError(error, {
+      userId,
+      command: 'url_processing',
+      url
+    });
 
     const errorInfo = handleError(error);
     await safeEditMessage(
@@ -252,6 +326,9 @@ bot.on('callback_query', async (query) => {
   try {
     await bot.answerCallbackQuery(query.id, { text: 'Processing your request...' });
 
+    // Track callback command
+    await analyticsService.trackCommand(userId, 'callback', null);
+
     if (data.startsWith('dl:')) {
       const [, second, third] = data.split(':');
       const id = third || second;
@@ -259,7 +336,10 @@ bot.on('callback_query', async (query) => {
 
       if (url) {
         const type = third ? second : (/mp3|audio/i.test(url) ? 'mp3' : 'video');
-        await handleDirectDownload(chatId, type, url);
+        const contentType = type === 'mp3' ? 'audio' : 'video';
+        const quality = type === 'mp3' ? 'MP3' : 'HD';
+        
+        await handleDirectDownload(chatId, type, url, userId, contentType, quality);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
@@ -268,7 +348,7 @@ bot.on('callback_query', async (query) => {
       const url = await getUrl(id);
 
       if (url) {
-        await handleSlideshowVideoDownload(chatId, url);
+        await handleSlideshowVideoDownload(chatId, url, userId);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
@@ -277,7 +357,7 @@ bot.on('callback_query', async (query) => {
       const url = await getUrl(id);
 
       if (url) {
-        await handlePhotoDownload(chatId, url);
+        await handlePhotoDownload(chatId, url, userId);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
@@ -287,6 +367,7 @@ bot.on('callback_query', async (query) => {
     }
   } catch (error) {
     logger.error('Callback query error:', error.message);
+    await analyticsService.trackError(error, { userId, command: 'callback', data });
     const errorInfo = handleError(error);
     await sendMarkdownMessage(chatId, messages.error(errorInfo.userMessage));
   }
@@ -347,13 +428,16 @@ async function handleSlideshowDownload(chatId, data) {
   });
 }
 
-async function handleDirectDownload(chatId, type, downloadUrl) {
+async function handleDirectDownload(chatId, type, downloadUrl, userId, contentType = null, quality = null) {
   logger.info(`Direct download requested: type=${type}, chatId=${chatId}`);
 
   // Send downloading message
   const downloadingMsg = await sendMarkdownMessage(chatId, messages.downloading(type));
 
+  const startTime = Date.now();
   let stream;
+  let fileSize = null;
+
   try {
     // Stream download from API with streaming response
     const result = await streamDownload({
@@ -366,6 +450,9 @@ async function handleDirectDownload(chatId, type, downloadUrl) {
 
     // Get filename from headers
     const filename = getFilenameFromHeaders(headers['content-disposition'], 'download');
+
+    // Get file size from headers
+    fileSize = parseInt(headers['content-length']) || null;
 
     // Update progress before sending file
     await safeEditMessage(bot, chatId, downloadingMsg.message_id, messages.uploading(type), {
@@ -391,14 +478,43 @@ async function handleDirectDownload(chatId, type, downloadUrl) {
 
     logger.info(`Download completed: ${filename} (streamed)`);
 
+    // Track successful download
+    if (userId) {
+      await analyticsService.trackDownload({
+        userId,
+        url: downloadUrl,
+        contentType: contentType || (type === 'mp3' ? 'audio' : 'video'),
+        quality: quality || (type === 'mp3' ? 'MP3' : 'HD'),
+        success: true,
+        fileSize,
+        processingTime: Date.now() - startTime
+      });
+    }
+
   } catch (error) {
     if (stream && typeof stream.destroy === 'function') stream.destroy();
+
+    // Track failed download
+    if (userId) {
+      await analyticsService.trackDownload({
+        userId,
+        url: downloadUrl,
+        contentType: contentType || (type === 'mp3' ? 'audio' : 'video'),
+        quality: quality || (type === 'mp3' ? 'MP3' : 'HD'),
+        success: false,
+        errorMessage: error.message,
+        processingTime: Date.now() - startTime
+      });
+    }
+
     await handleDownloadError(error, chatId, downloadingMsg.message_id, downloadUrl);
   }
 }
 
-async function handlePhotoDownload(chatId, photoUrl) {
+async function handlePhotoDownload(chatId, photoUrl, userId = null) {
   logger.info(`Photo download requested: chatId=${chatId}`);
+
+  const startTime = Date.now();
 
   try {
     // Send photo directly using URL
@@ -407,26 +523,55 @@ async function handlePhotoDownload(chatId, photoUrl) {
     });
 
     logger.info('Photo sent successfully');
+
+    // Track successful photo download
+    if (userId) {
+      await analyticsService.trackDownload({
+        userId,
+        url: photoUrl,
+        contentType: 'photo',
+        quality: 'original',
+        success: true,
+        processingTime: Date.now() - startTime
+      });
+    }
+
   } catch (error) {
     logger.error('Photo download error:', error.message);
+
+    // Track failed photo download
+    if (userId) {
+      await analyticsService.trackDownload({
+        userId,
+        url: photoUrl,
+        contentType: 'photo',
+        quality: 'original',
+        success: false,
+        errorMessage: error.message,
+        processingTime: Date.now() - startTime
+      });
+    }
+
     const errorInfo = handleError(error);
     await sendMarkdownMessage(chatId, messages.error(errorInfo.userMessage));
   }
 }
 
-async function handleSlideshowVideoDownload(chatId, encryptedUrl) {
+async function handleSlideshowVideoDownload(chatId, encryptedUrl, userId = null) {
   logger.info(`Slideshow video download requested: chatId=${chatId}`);
 
   // Send queued message - processing will happen in background
   const queuedMsg = await sendMarkdownMessage(chatId, messages.slideshowQueued());
 
   // Process in background (non-blocking)
-  processSlideshowInBackground(chatId, encryptedUrl, queuedMsg.message_id)
+  processSlideshowInBackground(chatId, encryptedUrl, queuedMsg.message_id, userId)
     .catch(err => logger.error('Unhandled slideshow background error:', err.message));
 }
 
-async function processSlideshowInBackground(chatId, encryptedUrl, messageId) {
+async function processSlideshowInBackground(chatId, encryptedUrl, messageId, userId = null) {
   let stream;
+  const startTime = Date.now();
+
   try {
     // Build slideshow download URL
     // encryptedUrl bisa berupa full URL atau token saja
@@ -457,6 +602,18 @@ async function processSlideshowInBackground(chatId, encryptedUrl, messageId) {
 
     logger.info('Slideshow video sent successfully (background)');
 
+    // Track successful slideshow download
+    if (userId) {
+      await analyticsService.trackDownload({
+        userId,
+        url: encryptedUrl,
+        contentType: 'slideshow',
+        quality: 'MP4',
+        success: true,
+        processingTime: Date.now() - startTime
+      });
+    }
+
   } catch (error) {
     if (stream && typeof stream.destroy === 'function') stream.destroy();
 
@@ -467,6 +624,19 @@ async function processSlideshowInBackground(chatId, encryptedUrl, messageId) {
       status: error.response?.status,
       stack: error.stack
     });
+
+    // Track failed slideshow download
+    if (userId) {
+      await analyticsService.trackDownload({
+        userId,
+        url: encryptedUrl,
+        contentType: 'slideshow',
+        quality: 'MP4',
+        success: false,
+        errorMessage: error.message,
+        processingTime: Date.now() - startTime
+      });
+    }
 
     // Fallback: provide manual download link if API fails
     if (error.response?.status >= 500 || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
@@ -508,9 +678,16 @@ bot.on('error', (error) => {
 
 async function startBot() {
   try {
-    // Create Express server
+    // Connect to MongoDB
+    await connectMongoDB();
+
+    // Create Express server for bot
     const app = createServer(bot);
     const server = await startServer(app, SERVER_PORT);
+
+    // Create and start dashboard server
+    const dashboardApp = createDashboardServer();
+    const dashboardServer = await startDashboardServer(dashboardApp);
 
     // Setup webhook if enabled
     if (USE_WEBHOOK) {
@@ -528,6 +705,7 @@ async function startBot() {
     }
 
     logger.info('Bot is running...');
+    logger.info(`Dashboard available at http://localhost:${process.env.DASHBOARD_PORT || 3001}`);
 
     // Graceful shutdown
     const shutdown = async (signal) => {
@@ -543,8 +721,14 @@ async function startBot() {
         }
 
         await closeRedis();
+        await closeMongoDB();
+        
         server.close(() => {
           logger.info('Server closed');
+        });
+        
+        dashboardServer.close(() => {
+          logger.info('Dashboard server closed');
           process.exit(0);
         });
       } catch (error) {

@@ -11,11 +11,15 @@ services:
       - .env
     environment:
       - REDIS_HOST=redis
+      - MONGODB_HOST=mongodb
       - NODE_ENV=production
     ports:
       - "${SERVER_PORT:-3000}:${SERVER_PORT:-3000}"
+      - "${DASHBOARD_PORT:-3001}:${DASHBOARD_PORT:-3001}"
     depends_on:
       redis:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
     networks:
       - bot-network
@@ -67,8 +71,45 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  mongodb:
+    image: mongo:7
+    container_name: tiktok-bot-mongodb
+    restart: unless-stopped
+    command: mongod --logpath /var/log/mongodb/mongod.log --logappend --quiet
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
+      MONGO_INITDB_DATABASE: tiktok_bot
+    volumes:
+      - mongodb-data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - bot-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/tiktok_bot --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   redis-data:
+    driver: local
+  mongodb-data:
     driver: local
 
 networks:
