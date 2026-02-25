@@ -73,6 +73,16 @@ function renderPreview(preview) {
   els.previewSection.classList.remove('hidden');
 }
 
+function showAdVerification() {
+  els.adSection.classList.remove('hidden');
+  els.optionsSection.classList.add('hidden');
+}
+
+function showDownloadOptions() {
+  els.adSection.classList.add('hidden');
+  els.optionsSection.classList.remove('hidden');
+}
+
 function renderOptions(options) {
   els.optionsList.innerHTML = '';
 
@@ -87,7 +97,7 @@ function renderOptions(options) {
     els.optionsList.appendChild(btn);
   });
 
-  els.optionsSection.classList.remove('hidden');
+  showDownloadOptions();
 }
 
 async function loadOptions() {
@@ -137,8 +147,7 @@ async function handlePrepare() {
     state.adWatched = false;
 
     renderPreview(data.preview);
-    els.adSection.classList.remove('hidden');
-    els.optionsSection.classList.add('hidden');
+    showAdVerification();
     els.chatDoneSection.classList.add('hidden');
     setStatus('URL is valid. Watch an ad to unlock format options.');
     preloadRewardedAd();
@@ -169,6 +178,7 @@ async function handleWatchAd() {
     state.adWatched = true;
 
     if (state.mode === 'chat') {
+      els.adSection.classList.add('hidden');
       els.chatDoneSection.classList.remove('hidden');
       setStatus('Ad verification completed. Return to the bot chat.');
 
@@ -182,6 +192,7 @@ async function handleWatchAd() {
     }
 
     await loadOptions();
+    els.adSection.classList.add('hidden');
     setStatus('Ad verified. Choose a download format below.');
   } catch (error) {
     setStatus(error.message || 'Failed to show ad.', true);
@@ -202,11 +213,12 @@ async function initChatMode(sessionId) {
   try {
     const data = await request(`/miniapp/api/session/${encodeURIComponent(sessionId)}`);
     renderPreview(data.preview);
-    els.adSection.classList.remove('hidden');
+    showAdVerification();
     preloadRewardedAd();
 
     if (data.adWatched) {
       state.adWatched = true;
+      els.adSection.classList.add('hidden');
       els.chatDoneSection.classList.remove('hidden');
       setStatus('This session is already verified. Return to bot chat.');
     } else {
