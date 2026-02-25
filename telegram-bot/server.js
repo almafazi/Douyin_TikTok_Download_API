@@ -116,6 +116,13 @@ function resolveDownloadUrl(payload, optionId) {
   return null;
 }
 
+function setNoCacheHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+}
+
 /**
  * Create Express server for health checks, webhooks, and mini app
  * @param {Object} bot - Telegram bot instance
@@ -138,9 +145,18 @@ export function createServer(bot, options = {}) {
     next();
   });
 
-  // Static mini app files
-  app.use('/miniapp', express.static(miniAppDir));
-  app.get('/miniapp', (req, res) => {
+  // Static mini app files (disable cache so Telegram/WebView picks updates immediately)
+  app.use('/miniapp', (req, res, next) => {
+    setNoCacheHeaders(res);
+    next();
+  });
+  app.use('/miniapp', express.static(miniAppDir, {
+    index: false,
+    redirect: false,
+    maxAge: 0
+  }));
+  app.get(['/miniapp', '/miniapp/'], (req, res) => {
+    setNoCacheHeaders(res);
     res.sendFile(path.join(miniAppDir, 'index.html'));
   });
 
