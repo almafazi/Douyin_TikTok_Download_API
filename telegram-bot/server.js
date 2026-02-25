@@ -1,16 +1,133 @@
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createLogger } from './utils/logger.js';
-import { checkRedisHealth } from './utils/redis.js';
+import { createAxiosInstance } from './utils/axiosConfig.js';
+import {
+  checkRedisHealth,
+  createFlowSession,
+  getFlowSession,
+  updateFlowSession
+} from './utils/redis.js';
 
 const logger = createLogger('Server');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const monetagSdkPath = path.join(__dirname, 'node_modules', 'monetag-tg-sdk', 'index.js');
+const miniAppDir = path.join(__dirname, 'miniapp');
+
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:6068';
+const API_TIMEOUT = parseInt(process.env.API_TIMEOUT, 10) || 120000;
+const MONETAG_ZONE_ID = process.env.MONETAG_ZONE_ID || '10653178';
+
+const tiktokRegex = /https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)\/[a-zA-Z0-9_\-\/@.?=&]+/;
+
+function isTikTokUrl(url) {
+  return typeof url === 'string' && tiktokRegex.test(url);
+}
+
+function buildPreview(data) {
+  const safeStats = data?.statistics || {};
+  const authorName = data?.author?.nickname || 'Unknown';
+  const title = data?.title || data?.description || 'TikTok Content';
+
+  return {
+    status: data?.status,
+    author: authorName,
+    title,
+    duration: data?.duration || 0,
+    cover: data?.cover || null,
+    stats: {
+      views: safeStats.play_count || 0,
+      likes: safeStats.digg_count || 0,
+      comments: safeStats.comment_count || 0,
+      shares: safeStats.repost_count || 0
+    },
+    photoCount: Array.isArray(data?.photos) ? data.photos.length : 0
+  };
+}
+
+function buildDownloadOptions(payload) {
+  const options = [];
+
+  if (payload?.status === 'tunnel') {
+    const links = payload?.download_link || {};
+
+    if (links.no_watermark_hd) {
+      options.push({ id: 'video_hd', label: 'Video HD (No Watermark)', kind: 'video' });
+    }
+
+    if (links.no_watermark) {
+      options.push({ id: 'video_sd', label: 'Video SD (No Watermark)', kind: 'video' });
+    }
+
+    if (links.watermark) {
+      options.push({ id: 'video_wm', label: 'Video With Watermark', kind: 'video' });
+    }
+
+    if (links.mp3) {
+      options.push({ id: 'audio_mp3', label: 'Audio MP3', kind: 'audio' });
+    }
+  }
+
+  if (payload?.status === 'picker') {
+    if (payload?.download_slideshow_link) {
+      options.push({ id: 'slideshow_video', label: 'Slideshow Video (MP4)', kind: 'slideshow' });
+    }
+
+    if (payload?.download_link?.mp3) {
+      options.push({ id: 'audio_mp3', label: 'Audio MP3', kind: 'audio' });
+    }
+
+    if (Array.isArray(payload?.photos)) {
+      payload.photos.forEach((_, index) => {
+        options.push({ id: `photo_${index}`, label: `Photo ${index + 1}`, kind: 'photo' });
+      });
+    }
+  }
+
+  return options;
+}
+
+function resolveDownloadUrl(payload, optionId) {
+  if (!payload || !optionId) return null;
+
+  if (payload.status === 'tunnel') {
+    const links = payload.download_link || {};
+
+    if (optionId === 'video_hd') return links.no_watermark_hd || null;
+    if (optionId === 'video_sd') return links.no_watermark || null;
+    if (optionId === 'video_wm') return links.watermark || null;
+    if (optionId === 'audio_mp3') return links.mp3 || null;
+  }
+
+  if (payload.status === 'picker') {
+    if (optionId === 'slideshow_video') return payload.download_slideshow_link || null;
+    if (optionId === 'audio_mp3') return payload.download_link?.mp3 || null;
+
+    if (optionId.startsWith('photo_')) {
+      const photoIndex = parseInt(optionId.replace('photo_', ''), 10);
+      if (Number.isInteger(photoIndex) && photoIndex >= 0 && photoIndex < (payload.photos?.length || 0)) {
+        return payload.photos[photoIndex]?.url || null;
+      }
+    }
+  }
+
+  return null;
+}
 
 /**
- * Create Express server for health checks and webhooks
+ * Create Express server for health checks, webhooks, and mini app
  * @param {Object} bot - Telegram bot instance
+ * @param {Object} options - Additional dependencies
  * @returns {Object} Express app
  */
-export function createServer(bot) {
+export function createServer(bot, options = {}) {
   const app = express();
+  const apiClient = options.apiClient || createAxiosInstance({
+    baseURL: API_BASE_URL,
+    timeout: API_TIMEOUT
+  });
 
   // Middleware
   app.use(express.json());
@@ -19,6 +136,12 @@ export function createServer(bot) {
   app.use((req, res, next) => {
     logger.debug(`${req.method} ${req.path}`);
     next();
+  });
+
+  // Static mini app files
+  app.use('/miniapp', express.static(miniAppDir));
+  app.get('/miniapp', (req, res) => {
+    res.sendFile(path.join(miniAppDir, 'index.html'));
   });
 
   // Health check endpoint
@@ -76,6 +199,205 @@ export function createServer(bot) {
     };
 
     res.json(metrics);
+  });
+
+  // Expose Monetag npm SDK as browser module without bundler
+  app.get('/vendor/monetag-tg-sdk.js', (req, res) => {
+    res.type('js').sendFile(monetagSdkPath);
+  });
+
+  // Mini app: resolve session/preview (chat + mini app)
+  app.get('/miniapp/api/session/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId;
+    const session = await getFlowSession(sessionId);
+
+    if (!session) {
+      res.status(404).json({ error: 'Session not found or expired' });
+      return;
+    }
+
+    res.json({
+      sessionId,
+      flow: session.flow,
+      adWatched: Boolean(session.adWatched),
+      preview: buildPreview(session.payload),
+      createdAt: session.createdAt || null
+    });
+  });
+
+  // Mini app: prepare TikTok data and create a gated session
+  app.post('/miniapp/api/prepare', async (req, res) => {
+    const rawUrl = req.body?.url;
+    const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+
+    if (!isTikTokUrl(url)) {
+      res.status(400).json({ error: 'Invalid TikTok URL' });
+      return;
+    }
+
+    try {
+      const response = await apiClient.post('/tiktok', { url });
+      const payload = response.data;
+
+      if (!payload || (payload.status !== 'tunnel' && payload.status !== 'picker')) {
+        res.status(400).json({ error: 'Unsupported TikTok content format' });
+        return;
+      }
+
+      const sessionId = await createFlowSession({
+        flow: 'miniapp',
+        sourceUrl: url,
+        payload,
+        adWatched: false,
+        createdAt: new Date().toISOString()
+      });
+
+      res.json({
+        sessionId,
+        adWatched: false,
+        preview: buildPreview(payload)
+      });
+    } catch (error) {
+      logger.error('Mini app prepare failed:', error.message);
+      res.status(500).json({ error: 'Failed to process TikTok URL' });
+    }
+  });
+
+  // Mini app: mark ad as watched (reward verified client-side by Monetag callback)
+  app.post('/miniapp/api/reward', async (req, res) => {
+    const sessionId = req.body?.sessionId;
+
+    if (!sessionId) {
+      res.status(400).json({ error: 'sessionId is required' });
+      return;
+    }
+
+    const session = await getFlowSession(sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found or expired' });
+      return;
+    }
+
+    const updated = await updateFlowSession(sessionId, {
+      adWatched: true,
+      adWatchedAt: new Date().toISOString()
+    });
+
+    if (!updated) {
+      res.status(500).json({ error: 'Failed to update session' });
+      return;
+    }
+
+    // Chat flow helper: notify user that ad gate is completed
+    if (updated.flow === 'chat' && updated.chatId) {
+      const continueKeyboard = {
+        inline_keyboard: [
+          [{ text: '✅ Continue (after ad)', callback_data: `ad:continue:${sessionId}` }],
+          [{ text: '❌ Cancel', callback_data: 'cancel' }]
+        ]
+      };
+
+      const sendContinueFallbackMessage = () => bot.sendMessage(
+        updated.chatId,
+        '✅ Ad verified. Continue is now unlocked.',
+        {
+          parse_mode: 'Markdown',
+          disable_web_page_preview: true,
+          reply_markup: continueKeyboard
+        }
+      );
+
+      if (updated.gateMessageId) {
+        bot.editMessageReplyMarkup(continueKeyboard, {
+          chat_id: updated.chatId,
+          message_id: updated.gateMessageId
+        }).catch(async (editError) => {
+          logger.warn(`Failed to update ad gate keyboard: ${editError.message}`);
+          try {
+            await sendContinueFallbackMessage();
+          } catch (notifyError) {
+            logger.warn(`Failed to notify chat after reward: ${notifyError.message}`);
+          }
+        });
+      } else {
+        sendContinueFallbackMessage().catch((notifyError) => {
+          logger.warn(`Failed to notify chat after reward: ${notifyError.message}`);
+        });
+      }
+    }
+
+    res.json({ ok: true, sessionId, adWatched: true });
+  });
+
+  // Mini app: get format options after ad has been watched
+  app.get('/miniapp/api/options/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId;
+    const session = await getFlowSession(sessionId);
+
+    if (!session) {
+      res.status(404).json({ error: 'Session not found or expired' });
+      return;
+    }
+
+    if (!session.adWatched) {
+      res.status(403).json({ error: 'Ad must be watched before showing options' });
+      return;
+    }
+
+    const options = buildDownloadOptions(session.payload);
+
+    res.json({
+      sessionId,
+      preview: buildPreview(session.payload),
+      options
+    });
+  });
+
+  // Mini app: resolve selected option to the download URL
+  app.get('/miniapp/api/download/:sessionId/:optionId', async (req, res) => {
+    const sessionId = req.params.sessionId;
+    const optionId = req.params.optionId;
+    const session = await getFlowSession(sessionId);
+
+    if (!session) {
+      res.status(404).json({ error: 'Session not found or expired' });
+      return;
+    }
+
+    if (!session.adWatched) {
+      res.status(403).json({ error: 'Ad must be watched before download' });
+      return;
+    }
+
+    const targetUrl = resolveDownloadUrl(session.payload, optionId);
+
+    if (!targetUrl) {
+      res.status(404).json({ error: 'Download option not found' });
+      return;
+    }
+
+    res.redirect(targetUrl);
+  });
+
+  // Public verification page for ad/network ownership checks
+  app.get('/', (req, res) => {
+    res.status(200).type('html').send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram Bot Service</title>
+  <script src='//libtl.com/sdk.js' data-zone='${MONETAG_ZONE_ID}' data-sdk='show_${MONETAG_ZONE_ID}'></script>
+  <script type="module">
+    import createAdHandler from '/vendor/monetag-tg-sdk.js';
+    window.monetagAdHandler = createAdHandler('${MONETAG_ZONE_ID}');
+  </script>
+</head>
+<body>
+  <p>Service is running.</p>
+  <p>Mini App: <a href="/miniapp">/miniapp</a></p>
+</body>
+</html>`);
   });
 
   // Webhook endpoint for Telegram

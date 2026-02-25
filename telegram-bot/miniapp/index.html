@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>SnapTik Mini App</title>
+  <link rel="stylesheet" href="/miniapp/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src='//libtl.com/sdk.js' data-zone='10653178' data-sdk='show_10653178'></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <h1>Snaptik TikTok Downloader Mini App</h1>
+      <p id="modeLabel" class="subtitle">Paste a link, watch an ad, then choose the download format.</p>
+    </header>
+
+    <section id="inputSection" class="panel">
+      <label for="urlInput">TikTok URL</label>
+      <input id="urlInput" type="url" placeholder="https://vt.tiktok.com/..." autocomplete="off">
+      <button id="prepareBtn" class="btn primary">Continue</button>
+    </section>
+
+    <section id="previewSection" class="panel hidden">
+      <h2>Preview</h2>
+      <div id="previewBody" class="preview-card"></div>
+    </section>
+
+    <section id="adSection" class="panel hidden">
+      <h2>Ad Verification</h2>
+      <p>To continue, you must watch a rewarded interstitial ad.</p>
+      <button id="watchAdBtn" class="btn accent">▶ Watch Ad</button>
+      <p id="adHint" class="hint">After the ad is completed, format options will be unlocked.</p>
+    </section>
+
+    <section id="optionsSection" class="panel hidden">
+      <h2>Choose Download Format</h2>
+      <div id="optionsList" class="option-list"></div>
+    </section>
+
+    <section id="chatDoneSection" class="panel hidden">
+      <h2>Ad Verified</h2>
+      <p>Return to the bot chat, then press <strong>Continue (after ad)</strong> to show format options.</p>
+    </section>
+
+    <p id="statusText" class="status">Ready.</p>
+  </main>
+
+  <script src="/miniapp/app.js" defer></script>
+</body>
+</html>

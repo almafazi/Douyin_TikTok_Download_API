@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import { createLogger } from './utils/logger.js';
 import { formatDuration, formatNumber, truncateText } from './utils/helpers.js';
 import { messages } from './utils/messages.js';
-import { storeUrl, getUrl, closeRedis } from './utils/redis.js';
+import { getUrl, closeRedis, createFlowSession, getFlowSession, updateFlowSession } from './utils/redis.js';
 import { isRateLimited } from './utils/rateLimiter.js';
 import { createAxiosInstance, streamDownload, getFilenameFromHeaders } from './utils/axiosConfig.js';
 import { handleError, safeEditMessage, safeDeleteMessage, ErrorTypes, BotError } from './utils/errorHandler.js';
@@ -20,11 +20,14 @@ const logger = createLogger('Bot');
 
 // Global error handlers
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection:', { reason: reason?.message || reason, stack: reason?.stack });
+  logger.error(
+    { reason: reason?.message || String(reason), stack: reason?.stack },
+    'Unhandled Rejection'
+  );
 });
 
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', { message: error.message, stack: error.stack });
+  logger.error({ message: error.message, stack: error.stack }, 'Uncaught Exception');
   process.exit(1);
 });
 
@@ -37,6 +40,10 @@ const USE_WEBHOOK = process.env.USE_WEBHOOK === 'true';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 3000;
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID;
+const MINIAPP_URL = process.env.MINIAPP_URL || 'https://ma.snaptik.fit/miniapp';
+const MINIAPP_PUBLIC_URL = process.env.MINIAPP_PUBLIC_URL || '';
+const MONETAG_ZONE_ID = process.env.MONETAG_ZONE_ID || '10653178';
+const TELEGRAM_IP_FAMILY = parseInt(process.env.TELEGRAM_IP_FAMILY || '4', 10);
 
 if (!TOKEN) {
   logger.error('TELEGRAM_BOT_TOKEN is required!');
@@ -44,12 +51,16 @@ if (!TOKEN) {
 }
 
 // Initialize bot
+const telegramRequestOptions = Number.isInteger(TELEGRAM_IP_FAMILY)
+  ? { family: TELEGRAM_IP_FAMILY }
+  : {};
+
 let bot;
 if (USE_WEBHOOK) {
-  bot = new TelegramBot(TOKEN);
+  bot = new TelegramBot(TOKEN, { request: telegramRequestOptions });
   logger.info('Bot initialized in webhook mode');
 } else {
-  bot = new TelegramBot(TOKEN, { polling: true });
+  bot = new TelegramBot(TOKEN, { polling: true, request: telegramRequestOptions });
   logger.info('Bot initialized in polling mode');
 }
 
@@ -63,6 +74,104 @@ const apiClient = createAxiosInstance({
 
 function isValidId(id) {
   return id !== undefined && id !== null && (typeof id === 'number' || (typeof id === 'string' && id.length > 0));
+}
+
+function isHttpsUrl(input) {
+  try {
+    return new URL(input).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isPublicHost(hostname) {
+  if (!hostname) return false;
+  const normalized = hostname.toLowerCase();
+  if (normalized === 'localhost' || normalized === '::1' || normalized === '[::1]') return false;
+  if (normalized === '0.0.0.0' || normalized.startsWith('127.')) return false;
+  if (normalized.endsWith('.local')) return false;
+  return true;
+}
+
+function resolveMiniAppBaseUrl(input) {
+  try {
+    return new URL(input).toString();
+  } catch {
+    const fallback = 'https://ma.snaptik.fit/miniapp';
+    logger.warn(`Invalid MINIAPP_URL (${input}). Falling back to ${fallback}.`);
+    return fallback;
+  }
+}
+
+const miniAppBaseUrl = resolveMiniAppBaseUrl(MINIAPP_URL);
+const miniAppTelegramUrl = MINIAPP_PUBLIC_URL
+  ? resolveMiniAppBaseUrl(MINIAPP_PUBLIC_URL)
+  : miniAppBaseUrl;
+const canUseTelegramWebAppButton = isHttpsUrl(miniAppTelegramUrl);
+const canUseTelegramUrlButton = (() => {
+  try {
+    const parsed = new URL(miniAppTelegramUrl);
+    return ['https:', 'http:'].includes(parsed.protocol) && isPublicHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+})();
+if (!canUseTelegramWebAppButton) {
+  logger.warn(`MINIAPP URL for Telegram is not HTTPS (${miniAppTelegramUrl}). Falling back to regular URL button instead of Telegram WebApp button.`);
+}
+if (!canUseTelegramUrlButton) {
+  logger.warn(`MINIAPP URL host is not publicly reachable for Telegram button (${miniAppTelegramUrl}). /start will be sent without mini app button.`);
+}
+
+function buildMiniAppSessionUrl(sessionId, mode = 'chat') {
+  const url = new URL(miniAppTelegramUrl);
+  url.searchParams.set('mode', mode);
+  url.searchParams.set('session', sessionId);
+  return url.toString();
+}
+
+function buildChatAdGateKeyboard(sessionId, { showContinue = false } = {}) {
+  const watchTarget = buildMiniAppSessionUrl(sessionId, 'chat');
+  const watchButton = canUseTelegramWebAppButton
+    ? { text: '👉 Watch ad', web_app: { url: watchTarget } }
+    : { text: '👉 Watch ad', url: watchTarget };
+
+  const keyboard = [];
+  if (!showContinue) {
+    keyboard.push([watchButton]);
+  }
+  if (showContinue) {
+    keyboard.push([{ text: '✅ Continue (after ad)', callback_data: `ad:continue:${sessionId}` }]);
+  }
+  keyboard.push([{ text: '❌ Cancel', callback_data: 'cancel' }]);
+
+  return keyboard;
+}
+
+async function setMiniAppMenuButton(chatId) {
+  if (!canUseTelegramWebAppButton) return;
+
+  const payload = {
+    chat_id: chatId,
+    menu_button: {
+      type: 'web_app',
+      text: 'Open',
+      web_app: { url: miniAppTelegramUrl }
+    }
+  };
+
+  try {
+    if (typeof bot.setChatMenuButton === 'function') {
+      await bot.setChatMenuButton(payload);
+      return;
+    }
+
+    if (typeof bot._request === 'function') {
+      await bot._request('setChatMenuButton', { form: payload });
+    }
+  } catch (error) {
+    logger.warn(`Failed to set menu button: ${error.message}`);
+  }
 }
 
 // ============== MESSAGE HELPERS ==============
@@ -137,10 +246,24 @@ bot.onText(/\/start/, async (msg) => {
   await analyticsService.trackUser(msg);
   await analyticsService.trackCommand(userId, 'start', Date.now() - startTime);
 
-  await bot.sendMessage(chatId, messages.welcome(username), {
+  const startMessageOptions = {
     parse_mode: 'Markdown',
     disable_web_page_preview: true
-  });
+  };
+
+  await setMiniAppMenuButton(chatId);
+
+  if (canUseTelegramWebAppButton || canUseTelegramUrlButton) {
+    startMessageOptions.reply_markup = {
+      inline_keyboard: [[
+        canUseTelegramWebAppButton
+          ? { text: '🚀 Open Mini App', web_app: { url: miniAppTelegramUrl } }
+          : { text: '🚀 Open Mini App', url: miniAppTelegramUrl }
+      ]]
+    };
+  }
+
+  await bot.sendMessage(chatId, messages.welcome(username), startMessageOptions);
 });
 
 // Help command
@@ -267,14 +390,44 @@ bot.on('message', async (msg) => {
 
     logger.info(`API Response status: ${data.status}`);
 
-    if (data.status === 'tunnel') {
-      await safeEditMessage(bot, chatId, processingMsg.message_id, messages.readyToDownload());
-      // Video content
-      await handleVideoDownload(chatId, data, msg);
-    } else if (data.status === 'picker') {
-      await safeEditMessage(bot, chatId, processingMsg.message_id, messages.readyToDownload());
-      // Image/Slideshow content
-      await handleSlideshowDownload(chatId, data);
+    if (data.status === 'tunnel' || data.status === 'picker') {
+      if (!canUseTelegramUrlButton) {
+        // Fallback when mini app URL cannot be opened from Telegram.
+        await safeEditMessage(bot, chatId, processingMsg.message_id, messages.readyToDownload());
+        if (data.status === 'tunnel') {
+          await handleVideoDownload(chatId, data);
+        } else {
+          await handleSlideshowDownload(chatId, data);
+        }
+        return;
+      }
+
+      const sessionId = await createFlowSession({
+        flow: 'chat',
+        chatId,
+        userId,
+        sourceUrl: url,
+        payload: data,
+        adWatched: false,
+        optionsShown: false,
+        gateMessageId: processingMsg.message_id,
+        monetagZoneId: MONETAG_ZONE_ID,
+        createdAt: new Date().toISOString()
+      });
+
+      await safeEditMessage(
+        bot,
+        chatId,
+        processingMsg.message_id,
+        `📺 *One more step*\n\nTo continue, watch a short ad first.\nAfter finishing it, the *Continue* button will appear.`,
+        {
+          parse_mode: 'Markdown',
+          disable_web_page_preview: true,
+          reply_markup: {
+            inline_keyboard: buildChatAdGateKeyboard(sessionId, { showContinue: false })
+          }
+        }
+      );
     } else {
       await safeEditMessage(bot, chatId, processingMsg.message_id, messages.error('Unsupported TikTok content format'));
     }
@@ -305,31 +458,86 @@ bot.on('message', async (msg) => {
 bot.on('callback_query', async (query) => {
   const chatId = query.message?.chat?.id;
   const messageId = query.message?.message_id;
-  const data = query.data;
+  const data = query.data || '';
   const userId = query.from?.id;
 
   if (!isValidId(chatId) || !isValidId(userId)) return;
 
   logger.info(`Callback query from ${userId}: ${data}`);
 
-  // Check rate limit for downloads
-  const rateLimit = await isRateLimited(userId, 'download');
-  if (!rateLimit.allowed) {
-    const resetInSeconds = Math.ceil(rateLimit.resetTime - (Date.now() / 1000));
-    await bot.answerCallbackQuery(query.id, {
-      text: `Rate limit exceeded. Please wait ${resetInSeconds}s.`,
-      show_alert: true
-    });
-    return;
+  const isDownloadAction = data.startsWith('dl:') || data.startsWith('ss:') || data.startsWith('photo:');
+
+  // Check rate limit only for actual file downloads
+  if (isDownloadAction) {
+    const rateLimit = await isRateLimited(userId, 'download');
+    if (!rateLimit.allowed) {
+      const resetInSeconds = Math.ceil(rateLimit.resetTime - (Date.now() / 1000));
+      await bot.answerCallbackQuery(query.id, {
+        text: `Rate limit exceeded. Please wait ${resetInSeconds}s.`,
+        show_alert: true
+      });
+      return;
+    }
   }
 
   try {
-    await bot.answerCallbackQuery(query.id, { text: 'Processing your request...' });
+    if (isDownloadAction) {
+      await bot.answerCallbackQuery(query.id, { text: 'Processing your request...' });
+    }
 
     // Track callback command
     await analyticsService.trackCommand(userId, 'callback', null);
 
-    if (data.startsWith('dl:')) {
+    if (data.startsWith('ad:continue:')) {
+      const sessionId = data.split(':')[2];
+      const session = await getFlowSession(sessionId);
+
+      if (!session) {
+        await bot.answerCallbackQuery(query.id, {
+          text: 'Ad session not found or expired.',
+          show_alert: true
+        });
+        return;
+      }
+
+      if (session.chatId !== chatId || session.userId !== userId) {
+        await bot.answerCallbackQuery(query.id, {
+          text: 'This ad session does not belong to you.',
+          show_alert: true
+        });
+        return;
+      }
+
+      if (!session.adWatched) {
+        await bot.answerCallbackQuery(query.id, {
+          text: 'Please watch the ad first, then press Continue.',
+          show_alert: true
+        });
+        return;
+      }
+
+      if (session.optionsShown) {
+        await bot.answerCallbackQuery(query.id, {
+          text: 'Format options were already sent.',
+          show_alert: false
+        });
+        return;
+      }
+
+      await updateFlowSession(sessionId, { optionsShown: true });
+      await safeDeleteMessage(bot, chatId, messageId);
+
+      if (session.payload?.status === 'tunnel') {
+        await handleVideoDownload(chatId, session.payload);
+      } else if (session.payload?.status === 'picker') {
+        await handleSlideshowDownload(chatId, session.payload);
+      } else {
+        await sendMarkdownMessage(chatId, messages.error('Unsupported TikTok content format'));
+      }
+      await bot.answerCallbackQuery(query.id, {
+        text: 'Ad verified. Format options have been sent.'
+      });
+    } else if (data.startsWith('dl:')) {
       const [, second, third] = data.split(':');
       const id = third || second;
       const url = await getUrl(id);
@@ -362,6 +570,7 @@ bot.on('callback_query', async (query) => {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
     } else if (data === 'cancel') {
+      await bot.answerCallbackQuery(query.id, { text: 'Canceled' });
       await safeDeleteMessage(bot, chatId, messageId);
       await bot.sendMessage(chatId, '❌ Canceled');
     }
@@ -667,11 +876,34 @@ Or try again later.`,
 // ============== ERROR HANDLING ==============
 
 bot.on('polling_error', (error) => {
-  logger.error('Polling error:', error.message);
+  const aggregateDetails = Array.isArray(error?.errors)
+    ? error.errors.map((item) => ({
+      name: item?.name,
+      message: item?.message,
+      code: item?.code,
+      errno: item?.errno,
+      syscall: item?.syscall,
+      hostname: item?.hostname,
+      address: item?.address,
+      port: item?.port
+    }))
+    : null;
+
+  logger.error(
+    {
+      message: error?.message,
+      code: error?.code,
+      stack: error?.stack,
+      aggregateDetails,
+      responseStatus: error?.response?.statusCode,
+      responseBody: error?.response?.body
+    },
+    'Polling error'
+  );
 });
 
 bot.on('error', (error) => {
-  logger.error('Bot error:', error.message);
+  logger.error({ message: error?.message, stack: error?.stack }, 'Bot error');
 });
 
 // ============== STARTUP ==============
@@ -682,7 +914,7 @@ async function startBot() {
     await connectMongoDB();
 
     // Create Express server for bot
-    const app = createServer(bot);
+    const app = createServer(bot, { apiClient });
     const server = await startServer(app, SERVER_PORT);
 
     // Create and start dashboard server
