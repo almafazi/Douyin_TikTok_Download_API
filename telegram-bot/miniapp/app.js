@@ -2,7 +2,8 @@ const state = {
   mode: 'miniapp',
   sessionId: null,
   adWatched: false,
-  adPreloaded: false
+  adPreloaded: false,
+  chatAutoAdStarted: false
 };
 
 const els = {
@@ -34,6 +35,10 @@ function setLoading(button, loading, loadingText = 'Processing...') {
     button.textContent = button.dataset.originalText;
   }
   button.disabled = loading;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function request(path, options = {}) {
@@ -127,6 +132,30 @@ async function watchRewardedAd() {
   });
 }
 
+async function waitForMonetagSdk(timeoutMs = 8000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (typeof window.show_10653178 === 'function') return true;
+    await sleep(150);
+  }
+  return typeof window.show_10653178 === 'function';
+}
+
+function showChatVerifiedState() {
+  els.previewSection.classList.add('hidden');
+  els.adSection.classList.add('hidden');
+  els.optionsSection.classList.add('hidden');
+  els.chatDoneSection.classList.remove('hidden');
+  setStatus('Ad verification completed. Return to the bot chat.');
+
+  if (window.Telegram?.WebApp?.MainButton) {
+    const mainButton = window.Telegram.WebApp.MainButton;
+    mainButton.setText('Back to chat');
+    mainButton.show();
+    mainButton.onClick(() => window.Telegram.WebApp.close());
+  }
+}
+
 async function handlePrepare() {
   const url = els.urlInput.value.trim();
   if (!url) {
@@ -158,16 +187,25 @@ async function handlePrepare() {
   }
 }
 
-async function handleWatchAd() {
+async function handleWatchAd({ auto = false } = {}) {
   if (!state.sessionId) {
     setStatus('Session is missing. Submit a TikTok URL first.', true);
     return;
   }
 
-  setLoading(els.watchAdBtn, true, 'Opening ad...');
-  setStatus('Waiting for ad completion...');
+  if (!auto) {
+    setLoading(els.watchAdBtn, true, 'Opening ad...');
+    setStatus('Waiting for ad completion...');
+  } else {
+    setStatus('Opening rewarded ad...');
+  }
 
   try {
+    const sdkReady = await waitForMonetagSdk();
+    if (!sdkReady) {
+      throw new Error('Ad SDK is still loading. Please tap Retry ad.');
+    }
+
     await watchRewardedAd();
 
     await request('/miniapp/api/reward', {
@@ -178,16 +216,7 @@ async function handleWatchAd() {
     state.adWatched = true;
 
     if (state.mode === 'chat') {
-      els.adSection.classList.add('hidden');
-      els.chatDoneSection.classList.remove('hidden');
-      setStatus('Ad verification completed. Return to the bot chat.');
-
-      if (window.Telegram?.WebApp?.MainButton) {
-        const mainButton = window.Telegram.WebApp.MainButton;
-        mainButton.setText('Back to chat');
-        mainButton.show();
-        mainButton.onClick(() => window.Telegram.WebApp.close());
-      }
+      showChatVerifiedState();
       return;
     }
 
@@ -195,9 +224,20 @@ async function handleWatchAd() {
     els.adSection.classList.add('hidden');
     setStatus('Ad verified. Choose a download format below.');
   } catch (error) {
+    if (state.mode === 'chat') {
+      // Fallback: only show retry button when auto-open fails.
+      els.adSection.classList.remove('hidden');
+      els.watchAdBtn.textContent = '▶ Retry Ad';
+      const adHint = document.getElementById('adHint');
+      if (adHint) {
+        adHint.textContent = 'Auto-open failed. Tap Retry Ad to continue.';
+      }
+    }
     setStatus(error.message || 'Failed to show ad.', true);
   } finally {
-    setLoading(els.watchAdBtn, false);
+    if (!auto) {
+      setLoading(els.watchAdBtn, false);
+    }
   }
 }
 
@@ -205,24 +245,28 @@ async function initChatMode(sessionId) {
   state.mode = 'chat';
   state.sessionId = sessionId;
 
-  els.modeLabel.textContent = 'Chat mode: complete ad verification to unlock format options in bot chat.';
+  els.modeLabel.textContent = 'Chat mode: opening ad...';
   els.inputSection.classList.add('hidden');
+  els.previewSection.classList.add('hidden');
+  els.optionsSection.classList.add('hidden');
+  els.chatDoneSection.classList.add('hidden');
+  els.adSection.classList.add('hidden');
 
   setStatus('Loading chat session...');
 
   try {
     const data = await request(`/miniapp/api/session/${encodeURIComponent(sessionId)}`);
-    renderPreview(data.preview);
-    showAdVerification();
-    preloadRewardedAd();
 
     if (data.adWatched) {
       state.adWatched = true;
-      els.adSection.classList.add('hidden');
-      els.chatDoneSection.classList.remove('hidden');
+      showChatVerifiedState();
       setStatus('This session is already verified. Return to bot chat.');
     } else {
-      setStatus('Session ready. Watch an ad to continue.');
+      preloadRewardedAd();
+      if (!state.chatAutoAdStarted) {
+        state.chatAutoAdStarted = true;
+        await handleWatchAd({ auto: true });
+      }
     }
   } catch (error) {
     setStatus(error.message, true);
@@ -240,7 +284,7 @@ function init() {
   const sessionId = params.get('session');
 
   els.prepareBtn.addEventListener('click', handlePrepare);
-  els.watchAdBtn.addEventListener('click', handleWatchAd);
+  els.watchAdBtn.addEventListener('click', () => handleWatchAd());
 
   if (mode === 'chat' && sessionId) {
     initChatMode(sessionId);
