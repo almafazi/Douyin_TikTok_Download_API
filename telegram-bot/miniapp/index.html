@@ -4,14 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>SnapTik Mini App</title>
-  <link rel="stylesheet" href="/miniapp/style.css?v=20260226-3">
+  <link rel="stylesheet" href="/miniapp/style.css?v=20260226-6">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src='//libtl.com/sdk.js' data-zone='10653178' data-sdk='show_10653178'></script>
 </head>
 <body>
   <main class="app-shell">
     <header class="hero">
-      <h1>Snaptik TikTok Downloader Mini App</h1>
+      <div class="hero-top">
+        <h1>Snaptik TikTok Downloader Mini App</h1>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle color theme">🌙 Dark</button>
+      </div>
       <p id="modeLabel" class="subtitle">Paste a link, watch an ad, then choose the download format.</p>
     </header>
 
@@ -29,7 +32,7 @@
     <section id="adSection" class="panel hidden">
       <h2>Ad Verification</h2>
       <p>To continue, you must watch a rewarded interstitial ad.</p>
-      <button id="watchAdBtn" class="btn accent">▶ Watch Ad</button>
+      <button id="watchAdBtn" class="btn primary">▶ Watch Ad</button>
       <p id="adHint" class="hint">After the ad is completed, format options will be unlocked.</p>
     </section>
 
@@ -46,6 +49,6 @@
     <p id="statusText" class="status">Ready.</p>
   </main>
 
-  <script src="/miniapp/app.js?v=20260226-3" defer></script>
+  <script src="/miniapp/app.js?v=20260226-6" defer></script>
 </body>
 </html>

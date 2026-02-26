@@ -5,9 +5,11 @@ const state = {
   adPreloaded: false,
   chatAutoAdStarted: false
 };
+const THEME_STORAGE_KEY = 'snaptik-miniapp-theme';
 
 const els = {
   modeLabel: document.getElementById('modeLabel'),
+  themeToggle: document.getElementById('themeToggle'),
   inputSection: document.getElementById('inputSection'),
   previewSection: document.getElementById('previewSection'),
   previewBody: document.getElementById('previewBody'),
@@ -39,6 +41,66 @@ function setLoading(button, loading, loadingText = 'Processing...') {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTelegramTheme() {
+  const scheme = window.Telegram?.WebApp?.colorScheme;
+  if (scheme === 'dark') return 'dark';
+  if (scheme === 'light') return 'light';
+  return null;
+}
+
+function getSystemTheme() {
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function readSavedTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Ignore storage failures in restricted environments
+  }
+}
+
+function applyTheme(theme, { persist = false } = {}) {
+  const resolvedTheme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', resolvedTheme);
+
+  if (els.themeToggle) {
+    els.themeToggle.textContent = resolvedTheme === 'dark' ? '☀ Light' : '🌙 Dark';
+  }
+
+  if (persist) {
+    saveTheme(resolvedTheme);
+  }
+}
+
+function initTheme() {
+  const savedTheme = readSavedTheme();
+  const initialTheme = savedTheme || getTelegramTheme() || getSystemTheme();
+  applyTheme(initialTheme);
+
+  if (els.themeToggle) {
+    els.themeToggle.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      applyTheme(next, { persist: true });
+    });
+  }
+
+  if (!savedTheme && window.Telegram?.WebApp?.onEvent) {
+    window.Telegram.WebApp.onEvent('themeChanged', () => {
+      applyTheme(getTelegramTheme());
+    });
+  }
 }
 
 async function request(path, options = {}) {
@@ -187,6 +249,9 @@ async function handlePrepare() {
 
     renderPreview(data.preview);
     showAdVerification();
+    if (state.mode === 'miniapp') {
+      els.inputSection.classList.add('hidden');
+    }
     els.chatDoneSection.classList.add('hidden');
     setStatus('URL is valid. Watch an ad to unlock format options.');
     preloadRewardedAd();
@@ -288,6 +353,7 @@ function init() {
     window.Telegram.WebApp.ready();
     window.Telegram.WebApp.expand();
   }
+  initTheme();
 
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
