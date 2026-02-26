@@ -145,14 +145,24 @@ function showChatVerifiedState() {
   els.previewSection.classList.add('hidden');
   els.adSection.classList.add('hidden');
   els.optionsSection.classList.add('hidden');
+  setStatus('Ad verified. Returning to chat...');
+
+  const telegramWebApp = window.Telegram?.WebApp;
+  if (typeof telegramWebApp?.close === 'function') {
+    setTimeout(() => {
+      telegramWebApp.close();
+    }, 350);
+    return;
+  }
+
+  // Fallback for non-Telegram environments
   els.chatDoneSection.classList.remove('hidden');
   setStatus('Ad verification completed. Return to the bot chat.');
-
-  if (window.Telegram?.WebApp?.MainButton) {
-    const mainButton = window.Telegram.WebApp.MainButton;
+  if (telegramWebApp?.MainButton) {
+    const mainButton = telegramWebApp.MainButton;
     mainButton.setText('Back to chat');
     mainButton.show();
-    mainButton.onClick(() => window.Telegram.WebApp.close());
+    mainButton.onClick(() => telegramWebApp.close());
   }
 }
 
