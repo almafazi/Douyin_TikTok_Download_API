@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import axios from 'axios';
 import { createLogger } from './utils/logger.js';
 import { createAxiosInstance } from './utils/axiosConfig.js';
 import {
@@ -114,6 +115,40 @@ function resolveDownloadUrl(payload, optionId) {
   }
 
   return null;
+}
+
+function inferExtension(contentType, sourceUrl) {
+  const normalizedType = (contentType || '').toLowerCase();
+  if (normalizedType.includes('video/mp4')) return 'mp4';
+  if (normalizedType.includes('audio/mpeg')) return 'mp3';
+  if (normalizedType.includes('audio/mp4')) return 'm4a';
+  if (normalizedType.includes('image/jpeg')) return 'jpg';
+  if (normalizedType.includes('image/png')) return 'png';
+  if (normalizedType.includes('image/webp')) return 'webp';
+
+  try {
+    const parsed = new URL(sourceUrl);
+    const ext = path.extname(parsed.pathname || '').replace('.', '').toLowerCase();
+    if (ext && ext.length <= 5) return ext;
+  } catch {
+    // Ignore parsing errors and fallback to binary
+  }
+
+  return 'bin';
+}
+
+function sanitizeFilenamePart(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64) || 'file';
+}
+
+function buildAttachmentFilename(optionId, contentType, sourceUrl) {
+  const ext = inferExtension(contentType, sourceUrl);
+  const base = sanitizeFilenamePart(optionId);
+  return `snaptik_${base}.${ext}`;
 }
 
 function setNoCacheHeaders(res) {
@@ -392,7 +427,38 @@ export function createServer(bot, options = {}) {
       return;
     }
 
-    res.redirect(targetUrl);
+    try {
+      const upstream = await axios.get(targetUrl, {
+        responseType: 'stream',
+        timeout: API_TIMEOUT,
+        maxRedirects: 5
+      });
+
+      const contentType = upstream.headers['content-type'] || 'application/octet-stream';
+      const contentLength = upstream.headers['content-length'];
+      const filename = buildAttachmentFilename(optionId, contentType, targetUrl);
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+
+      upstream.data.on('error', (streamErr) => {
+        logger.warn(`Download stream error: ${streamErr.message}`);
+        if (!res.headersSent) {
+          res.status(502).json({ error: 'Failed to stream download file' });
+        } else {
+          res.end();
+        }
+      });
+
+      upstream.data.pipe(res);
+    } catch (error) {
+      logger.warn(`Mini app download proxy failed: ${error.message}`);
+      res.status(502).json({ error: 'Failed to fetch download file' });
+    }
   });
 
   // Public verification page for ad/network ownership checks

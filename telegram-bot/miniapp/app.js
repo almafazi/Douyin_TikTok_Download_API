@@ -43,6 +43,31 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isIosDevice() {
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function triggerDownload(optionId) {
+  const relativeTarget = `/miniapp/api/download/${encodeURIComponent(state.sessionId)}/${encodeURIComponent(optionId)}?download=1`;
+
+  // iOS Telegram WebView often opens media inline; open externally to trigger file download UX.
+  if (isIosDevice() && window.Telegram?.WebApp?.openLink) {
+    const absoluteTarget = new URL(relativeTarget, window.location.origin).toString();
+    window.Telegram.WebApp.openLink(absoluteTarget, { try_instant_view: false });
+    return;
+  }
+
+  const anchor = document.createElement('a');
+  anchor.href = relativeTarget;
+  anchor.rel = 'noopener';
+  anchor.target = '_blank';
+  anchor.download = '';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 function getTelegramTheme() {
   const scheme = window.Telegram?.WebApp?.colorScheme;
   if (scheme === 'dark') return 'dark';
@@ -158,8 +183,7 @@ function renderOptions(options) {
     btn.className = 'btn primary option-btn';
     btn.textContent = item.label;
     btn.addEventListener('click', () => {
-      const target = `/miniapp/api/download/${encodeURIComponent(state.sessionId)}/${encodeURIComponent(item.id)}`;
-      window.location.href = target;
+      triggerDownload(item.id);
     });
     els.optionsList.appendChild(btn);
   });
