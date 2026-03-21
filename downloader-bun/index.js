@@ -9,15 +9,16 @@ import ffmpegStatic from 'ffmpeg-static';
 import { cleanupFolder, initCleanupSchedule } from './cleanup.js';
 import dotenv from 'dotenv';
 import { 
-  encrypt, 
   decrypt,
 } from './encryption.js';
 import { createReadStream } from 'fs';
 import got from 'got';
-// Import the fallback library
-import TikTokFallbackDownloader from './tiktok-fallback.js';
-import SsstikFallbackDownloader from './ssstik-fallback.js';
 import { Transform } from 'stream';
+import {
+  generateTiktokResponse as generateHybridResponse,
+  getHybridApiData,
+  isRedisReady as isHybridRedisReady
+} from './tiktok-hybrid.js';
 dotenv.config();
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
@@ -28,19 +29,11 @@ const PORT = process.env.PORT || 3021;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3021';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow';
 const DOUYIN_API_URL = process.env.DOUYIN_API_URL || 'http://127.0.0.1:3035/api/hybrid/video_data';
-
-// Initialize fallback downloader
-const fallbackDownloader = new TikTokFallbackDownloader({
-    proxy: null,
-    timeout: 30000
-});
-
-import { generateTiktokResponse } from './tiktok-library.js';
-
-// const fallbackDownloader = new SsstikFallbackDownloader({
-//     proxy: null,
-//     timeout: 30000
-// });
+const TIKTOK_PROVIDER = String(process.env.TIKTOK_PROVIDER || 'hybrid').toLowerCase();
+const ALLOW_PROVIDER_OVERRIDE = String(process.env.ALLOW_PROVIDER_OVERRIDE || 'false').toLowerCase() === 'true';
+const LIBRARY_TIMEOUT_MS = parseInt(process.env.LIBRARY_TIMEOUT_MS || '12000', 10);
+const LIBRARY_FALLBACK_TO_HYBRID = String(process.env.LIBRARY_FALLBACK_TO_HYBRID || 'true').toLowerCase() === 'true';
+const VALID_PROVIDERS = ['hybrid', 'library'];
 
 // Initialize Express app
 const app = express();
@@ -70,6 +63,69 @@ const contentTypes = {
   video: ['video/mp4', 'mp4'],
   image: ['image/jpeg', 'jpg']
 };
+
+function normalizeProvider(provider) {
+  const normalized = String(provider || '').toLowerCase().trim();
+  if (normalized === 'hybrid-api') {
+    return 'hybrid';
+  }
+  if (VALID_PROVIDERS.includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function resolveProvider(requestMethod) {
+  const configuredProvider = normalizeProvider(TIKTOK_PROVIDER) || 'hybrid';
+  const requestProvider = normalizeProvider(requestMethod);
+
+  if (ALLOW_PROVIDER_OVERRIDE && requestProvider) {
+    return requestProvider;
+  }
+
+  return configuredProvider;
+}
+
+async function generateLibraryResponse(url) {
+  const libraryModule = await import('./tiktok-library.js');
+  return libraryModule.generateTiktokResponse(url, {
+    version: 'v1',
+    showOriginalResponse: true
+  });
+}
+
+async function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function generateTikTokResponseByProvider(url, provider) {
+  if (provider === 'library') {
+    try {
+      return await withTimeout(
+        generateLibraryResponse(url),
+        LIBRARY_TIMEOUT_MS,
+        `library provider timed out after ${LIBRARY_TIMEOUT_MS}ms`
+      );
+    } catch (error) {
+      if (!LIBRARY_FALLBACK_TO_HYBRID) {
+        throw error;
+      }
+      console.warn(`[Provider Fallback] library failed, fallback to hybrid: ${error.message}`);
+      return generateHybridResponse(url, { minimal: true });
+    }
+  }
+  return generateHybridResponse(url, { minimal: true });
+}
 
 async function downloadFile(url, outputPath, options = {}) {
   const { signal } = options;
@@ -284,170 +340,29 @@ async function streamDownload(url, res, contentType, encodedFilename) {
   }
 }
 
-// Modified fetchTikTokData with fallback support
-async function fetchTikTokData(url, minimal = true) {
-  try {
-    // Try primary API first
-    const apiURL = `${DOUYIN_API_URL}?url=${encodeURIComponent(url)}&minimal=${minimal ? 'true' : 'false'}`;
-    
-    const response = await got(apiURL, {
-      // timeout: {
-      //   request: 5000 // 120 seconds timeout
-      // },
-      // retry: {
-      //   limit: 2
-      // },
-      responseType: 'json'
-    });
-    
-    // console.log('✅ Primary API (DOUYIN) used successfully');
-    return response.body;
-    
-  } catch (primaryError) {
-   // console.warn('⚠️ Primary API failed, trying fallback:', primaryError.message);
-    
-    try {
-      // Use fallback API
-      const fallbackData = await fallbackDownloader.fetchTikTokData(url, minimal);
-      // console.log('✅ Fallback API (TikWM) used successfully');
-      return fallbackData;
-      
-    } catch (fallbackError) {
-      // console.error('❌ Both APIs failed');
-      // console.error('Primary error:', primaryError.message);
-      // console.error('Fallback error:', fallbackError.message);
-      
-      throw new Error(`All APIs failed. Primary: ${primaryError.message}, Fallback: ${fallbackError.message}`);
-    }
-  }
-}
-
-// Generate JSON response matching the second file format
-function generateJsonResponse(data, url = '') {
-  const videoData = data.data;
-  const author = videoData.author;
-  const statistics = videoData.statistics;
-  const musicUrl = videoData.music?.play_url?.uri || videoData.music?.play_url?.url_list?.[0] || videoData.music?.play_url?.url || '';
-  const isImage = videoData.type === 'image';
-
-  const filteredAuthor = {
-    nickname: author.nickname,
-    signature: author.signature,
-    avatar: author.avatar_thumb?.url_list?.[0] || ''
-  };
-
-  let picker = [];
-  let metadata = {
-    title: videoData.desc,
-    description: videoData.desc,
-    statistics: {
-      repost_count: statistics.repost_count,
-      comment_count: statistics.comment_count,
-      digg_count: statistics.digg_count,
-      play_count: statistics.play_count
-    },
-    artist: author.nickname,
-    cover: videoData.cover_data?.cover?.url_list?.[0],
-    duration: videoData.duration,
-    audio: musicUrl,
-    download_link: {},
-    music_duration: videoData.music?.duration,
-    author: filteredAuthor
-  };
-
-  if (isImage) {
-    const imageUrls = videoData.image_data;
-    picker = imageUrls.no_watermark_image_list.map(url => ({
-      type: 'photo',
-      url: url
-    }));
-
-    const encryptedNoWatermarkUrls = imageUrls.no_watermark_image_list.map(url =>
-      encrypt(JSON.stringify({ url, author: author.nickname, type: 'image' }), ENCRYPTION_KEY, 360)
-    );
-
-    metadata.download_link.mp3 = `${BASE_URL}/download?data=${encrypt(JSON.stringify({url: musicUrl, author: author.nickname, type: 'mp3' }), ENCRYPTION_KEY, 360)}`;
-
-    metadata.download_link.no_watermark = encryptedNoWatermarkUrls.map(
-      encryptedUrl => `${BASE_URL}/download?data=${encryptedUrl}`
-    );
-    
-    metadata.download_slideshow_link = `${BASE_URL}/download-slideshow?url=${encrypt(url, ENCRYPTION_KEY, 360)}`;
-    
-  } else {
-    const videoUrls = videoData.video_data;
-
-    const generateDownloadLink = (url, type) => {
-      if (url) {
-        const encryptedUrl = encrypt(JSON.stringify({
-          url: url,
-          author: author.nickname,
-          type: type
-        }), ENCRYPTION_KEY, 360);
-        return `${BASE_URL}/download?data=${encryptedUrl}`;
-      }
-      return null;
-    };
-
-    metadata.download_link = {
-      watermark: generateDownloadLink(videoUrls.wm_video_url, 'video'),
-      watermark_hd: generateDownloadLink(videoUrls.wm_video_url_HQ, 'video'),
-      no_watermark: generateDownloadLink(videoUrls.nwm_video_url, 'video'),
-      no_watermark_hd: generateDownloadLink(videoUrls.nwm_video_url_HQ, 'video'),
-      mp3: generateDownloadLink(musicUrl, 'mp3')
-    };
-
-    Object.keys(metadata.download_link).forEach(key => {
-      if (metadata.download_link[key] === null) {
-        delete metadata.download_link[key];
-      }
-    });
-  }
-
-  return {
-    status: isImage ? 'picker' : 'tunnel',
-    photos: picker,
-    ...metadata
-  };
-}
-
 // ================== API ROUTES ==================
 
 // TikTok URL processing endpoint
 app.post('/tiktok', async (req, res) => {
   try {
-    const { url } = req.body;
+    const { url, method } = req.body;
+    const selectedProvider = resolveProvider(method);
 
     if (!url) {
       return res.status(400).json({ error: 'URL parameter is required' });
+    }
+
+    if (!selectedProvider) {
+      return res.status(400).json({
+        error: `Invalid provider. Valid providers: ${VALID_PROVIDERS.join(', ')}`
+      });
     }
 
     if (!url.includes('tiktok.com') && !url.includes('douyin.com')) {
       return res.status(400).json({ error: 'Only TikTok and Douyin URLs are supported' });
     }
 
-    let response;
-
-    try {
-      // Try primary TikTok API with v1/v3 fallback built in
-      response = await generateTiktokResponse(url, {
-        version: "v1",
-        cookie: "delay_guest_mode_vid=5;tt-target-idc-sign=Eu-7PTNQSMLQCGZHkZtYmMOonVVebB2qkF8qGvvnTrKrTBap8fPadCld83tmWTIEGHEgZIusdK5HBp1hQpZb3VX5g46TSRXv6PQPkBeXVdlCDLQeRnQFZaKd5QiBhflnWw8tAWYFk1AuBoncPMfIpxKMHfke8IgOJC3CN6aydMy7aTzyhct4xLFgmxQaaRghJ3qVc400iReU2iLPaJzTX2v4n53EaU7m9Ab9-e2F-7PkLoXZyP6DEx2tNFqMbX3eXQJ3VwiEeQXPkhjESlzQXObv6eAgEjdNDxJcD_jmh-KWC8gNE7XWJDCMIOUL8NGVk75i0ZlS6agBVKaJwuoG8-9gGEVTllpsRblSr3FEivwEvGiABZtctoeGVyPN93TteT9mjexlfilsxedzjXlM6nIxDtqZ4A8Hj0O7Gpc-DyN17hPan1s7GcVf9HKCQzNqiPpOjygRtfj6K-NhwOwFnHt5fbsQxCKZf7WXnwPdZbsw4fWP_pkOLVIDEN2Ywi-w;msToken=7Xhm-TTunPrEE--WXnYIzScbHI_uItrHAytiDv5Q2Nl5aUAyPrUMGaK0Kbd0NzKu_Zio0jxLy6i7WTD7zy2R13n_Pgx8HshbCLo30VoMYbNrRY74mDcj3NiRd8cKN3jFmyJVjAQJUw==;sid_guard=b6a45debd08d45d91900cce679ad258b%7C1745777637%7C15551996%7CFri%2C+24-Oct-2025+18%3A13%3A53+GMT;ttwid=1%7C8nIrnSg0iT2WTdOFVc_fmEGYyOuqvoFRog7KzlMMpT4%7C1745777644%7Cf025ae406b97534941fb43bcdf42183521c8f9498332fe608e9315b7e8e002ce;store-country-code-src=uid;perf_feed_cache={%22expireTimestamp%22:1745949600000%2C%22itemIds%22:[%227479345522164174087%22%2C%227480872211373411589%22%2C%227494525854916168978%22]};uid_tt=935ab8cc560180239f3e0c75e5b435c127621b1080151bce4b2f47d7f1931f80;passport_csrf_token_default=cb464025914433ef62f8fdc779950386;store-country-sign=MEIEDKPog9ya0yXyPPJwhgQgnCQi9UVHLaLY7njJpTK80t3gaZ7rptp_R2X6-K40ER8EEG1EdSKPcLPwToFB5DBJGTg;msToken=HWjxNChMGSpW71ZPfsk2quVb_HGjLF1g_RkuRkDafMVbKyCU6PotTvYWPmOc28Osow2RsbA1y-Cj5hEdU24CiKjsJBIsFDj6umPoLoDWI_MGez1BiyuKBUI-SzpndcpGxOX9l07LaQ==;s_v_web_id=verify_m8t4rr0k_VC2pLfQU_NWqf_4BGY_ACK1_RntXpGbJ7ufc;store-idc=alisg;ssid_ucp_v1=1.0.0-KDRmOGU5NTFhYjZmM2Y1M2RlOTliNjg4OWQ0YjY3ZGRiYTllMGI3Y2UKGQiUiMLc69LD6GcQ5ee5wAYYsws4CEASSAQQAxoCbXkiIGI2YTQ1ZGViZDA4ZDQ1ZDkxOTAwY2NlNjc5YWQyNThi;tiktok_webapp_theme=dark;cmpl_token=AgQQAPOgF-RO0rfv4DEzol0t_Yd0lmST_4UrYNhhkQ;last_login_method=google;multi_sids=7480776496593798164%3Ab6a45debd08d45d91900cce679ad258b;odin_tt=e9eaa9cb36df6805036ac24dad5eb3d6f71982050c65db792fe9b1c012bfb5b8a9087cb81235953394cd19eafe38baffa0719a854317d81a7bc283740161404b65539b67fa5b38433106da9c1e7d5eb4;passport_auth_status=d280e9f317649d8a04299fe030a519ad%2C52a91fd8e290dd33d8094fecea733e63;passport_auth_status_ss=d280e9f317649d8a04299fe030a519ad%2C52a91fd8e290dd33d8094fecea733e63;passport_csrf_token=cb464025914433ef62f8fdc779950386;passport_fe_beating_status=true;sessionid=b6a45debd08d45d91900cce679ad258b;sessionid_ss=b6a45debd08d45d91900cce679ad258b;sid_tt=b6a45debd08d45d91900cce679ad258b;sid_ucp_v1=1.0.0-KDRmOGU5NTFhYjZmM2Y1M2RlOTliNjg4OWQ0YjY3ZGRiYTllMGI3Y2UKGQiUiMLc69LD6GcQ5ee5wAYYsws4CEASSAQQAxoCbXkiIGI2YTQ1ZGViZDA4ZDQ1ZDkxOTAwY2NlNjc5YWQyNThi;store-country-code=id;tiktok_webapp_theme_source=auto;tt-target-idc=alisg;tt_chain_token=lk9As53N10TXpYWZJdFgvw==;tt_csrf_token=7RYo65fY-jfPl_Tqp6sdo2ldG5kcI-Q_2aIc;uid_tt_ss=935ab8cc560180239f3e0c75e5b435c127621b1080151bce4b2f47d7f1931f80",
-        showOriginalResponse: true
-      });
-
-    } catch (primaryError) {
-      // External fallback is temporarily disabled
-      // try {
-      //   // Fallback to external TikWM downloader as last resort
-      //   const minimal = true;
-      //   const fallbackData = await fallbackDownloader.fetchTikTokData(url, minimal);
-      //   response = generateJsonResponse(fallbackData, url);
-      // } catch (fallbackError) {
-      //   throw new Error(`All APIs failed. Primary (v1/v3): ${primaryError.message}, External fallback: ${fallbackError.message}`);
-      // }
-      throw primaryError;
-    }
+    const response = await generateTikTokResponseByProvider(url, selectedProvider);
 
     return res.status(200).json(response);
 
@@ -567,8 +482,7 @@ app.get('/download-slideshow', async (req, res) => {
 
     const decryptedURL = decrypt(url, ENCRYPTION_KEY);
 
-    // Use fetchTikTokData with fallback support
-    const data = await fetchTikTokData(decryptedURL, true);
+    const data = await getHybridApiData(decryptedURL, true);
 
     if (!data || !data.data) {
       await cleanupTempDir();
@@ -679,27 +593,25 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     time: new Date().toISOString(),
+    provider: resolveProvider(),
+    allow_provider_override: ALLOW_PROVIDER_OVERRIDE,
     apis: {
-      primary: 'unknown',
-      fallback: 'unknown'
-    }
+      hybrid: 'unknown'
+    },
+    redis: isHybridRedisReady() ? 'online' : 'offline'
   };
 
-  // Test primary API
+  // Test hybrid API
   try {
     const testUrl = `${DOUYIN_API_URL}?url=test&minimal=true`;
-    await got(testUrl, { timeout: { request: 5000 }, retry: { limit: 0 } });
-    health.apis.primary = 'online';
+    await got(testUrl, {
+      timeout: { request: 5000 },
+      retry: { limit: 0 },
+      throwHttpErrors: false
+    });
+    health.apis.hybrid = 'online';
   } catch (error) {
-    health.apis.primary = 'offline';
-  }
-
-  // Test fallback API
-  try {
-    await fallbackDownloader.client.get('/');
-    health.apis.fallback = 'online';
-  } catch (error) {
-    health.apis.fallback = 'offline';
+    health.apis.hybrid = 'offline';
   }
 
   res.status(200).json(health);
@@ -724,7 +636,10 @@ app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
   console.log(`Base URL: ${BASE_URL}`);
   console.log(`Temp directory: ${tempDir}`);
-  console.log(`Primary API URL: ${DOUYIN_API_URL}`);
-  console.log(`Fallback API: TikWM.com`);
-  console.log(`Fallback Proxy: ${fallbackDownloader.proxy}`);
+  console.log(`Hybrid API URL: ${DOUYIN_API_URL}`);
+  console.log(`Hybrid module: tiktok-hybrid.js`);
+  console.log(`TikTok provider: ${resolveProvider()} (env TIKTOK_PROVIDER=${TIKTOK_PROVIDER})`);
+  console.log(`Provider override: ${ALLOW_PROVIDER_OVERRIDE ? 'enabled' : 'disabled'}`);
+  console.log(`Library timeout: ${LIBRARY_TIMEOUT_MS}ms`);
+  console.log(`Library fallback to hybrid: ${LIBRARY_FALLBACK_TO_HYBRID ? 'enabled' : 'disabled'}`);
 });
