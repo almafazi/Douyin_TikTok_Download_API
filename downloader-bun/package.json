@@ -5,7 +5,7 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
-    "@tobyg74/tiktok-api-dl": "github:almafazi/tiktok-api-dl#8bd587be6a309938f2256c0986fc9e3d3b66ba72",
+    "@tobyg74/tiktok-api-dl": "github:almafazi/tiktok-api-dl#f36cd5d8a463fb84981765234280d298644c0acb",
     "axios": "^1.9.0",
     "cheerio": "^1.1.0",
     "compression": "^1.8.0",
