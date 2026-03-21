@@ -9,8 +9,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies (including devDependencies for build if needed)
-RUN npm ci
+# No dependency install in builder stage (source-only copy stage)
 
 # Copy source code
 COPY . .
@@ -27,8 +26,10 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
+# Install production dependencies only.
+# Prefer deterministic install via npm ci, fallback to npm install when lockfile check is stricter in some npm builds.
+RUN (npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund) \
+    && npm cache clean --force
 
 # Copy app source from builder
 COPY --from=builder /app/bot.js ./
@@ -36,6 +37,7 @@ COPY --from=builder /app/server.js ./
 COPY --from=builder /app/healthcheck.js ./
 COPY --from=builder /app/utils ./utils
 COPY --from=builder /app/analytics ./analytics
+COPY --from=builder /app/miniapp ./miniapp
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \

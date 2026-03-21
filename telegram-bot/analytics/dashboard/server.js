@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 
 const logger = createLogger('Dashboard');
 const PORT = process.env.DASHBOARD_PORT || 3001;
+const monetagSdkPath = path.join(__dirname, '..', '..', 'node_modules', 'monetag-tg-sdk', 'index.js');
 
 export function createDashboardServer() {
   const app = express();
@@ -19,6 +20,11 @@ export function createDashboardServer() {
 
   // Static files
   app.use(express.static(path.join(__dirname, 'public')));
+
+  // Expose Monetag npm SDK for browser module import
+  app.get('/vendor/monetag-tg-sdk.js', (req, res) => {
+    res.type('js').sendFile(monetagSdkPath);
+  });
 
   // API routes
   app.use('/api', analyticsRouter);

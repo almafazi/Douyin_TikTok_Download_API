@@ -15,7 +15,8 @@ Send a TikTok link to:
 *How to use:*
 1. Copy a TikTok link
 2. Paste it in this chat
-3. Choose your preferred format
+3. Watch a short ad
+4. Choose your preferred format
 
 *Support:*
 • TikTok video (HD/SD)
@@ -38,7 +39,8 @@ Type /help for more details.
 2. Tap "Share" on a video
 3. Choose "Copy Link"
 4. Paste the link in this chat
-5. Pick a download format
+5. Watch a short ad
+6. Pick a download format
 
 *Supported formats:*
 • Video without watermark (HD/SD)

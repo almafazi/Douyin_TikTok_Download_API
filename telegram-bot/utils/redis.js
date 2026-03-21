@@ -48,6 +48,8 @@ redis.on('end', () => {
 // URL Storage with TTL
 const URL_PREFIX = 'url:';
 const URL_TTL = 3600; // 1 hour
+const FLOW_PREFIX = 'flow:';
+const FLOW_TTL = 3600; // 1 hour
 
 export async function storeUrl(url) {
   const id = Math.random().toString(36).substr(2, 8);
@@ -81,6 +83,60 @@ export async function deleteUrl(id) {
     await redis.del(key);
   } catch (error) {
     logger.error('Failed to delete URL:', error.message);
+  }
+}
+
+export async function createFlowSession(data, ttl = FLOW_TTL) {
+  const id = Math.random().toString(36).slice(2, 12);
+  const key = `${FLOW_PREFIX}${id}`;
+
+  try {
+    await redis.setex(key, ttl, JSON.stringify(data));
+    return id;
+  } catch (error) {
+    logger.error('Failed to create flow session:', error.message);
+    throw error;
+  }
+}
+
+export async function getFlowSession(id) {
+  const key = `${FLOW_PREFIX}${id}`;
+
+  try {
+    const raw = await redis.get(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    logger.error('Failed to get flow session:', error.message);
+    return null;
+  }
+}
+
+export async function updateFlowSession(id, patch, ttl = FLOW_TTL) {
+  const current = await getFlowSession(id);
+  if (!current) return null;
+
+  const next = {
+    ...current,
+    ...patch,
+    updatedAt: new Date().toISOString()
+  };
+
+  const key = `${FLOW_PREFIX}${id}`;
+  try {
+    await redis.setex(key, ttl, JSON.stringify(next));
+    return next;
+  } catch (error) {
+    logger.error('Failed to update flow session:', error.message);
+    return null;
+  }
+}
+
+export async function deleteFlowSession(id) {
+  const key = `${FLOW_PREFIX}${id}`;
+  try {
+    await redis.del(key);
+  } catch (error) {
+    logger.error('Failed to delete flow session:', error.message);
   }
 }
 
