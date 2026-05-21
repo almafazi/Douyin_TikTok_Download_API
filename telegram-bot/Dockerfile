@@ -1,7 +1,16 @@
 FROM node:20-alpine AS builder
 
-# Install dependencies for native modules
-RUN apk add --no-cache python3 make g++
+# Install build dependencies for native modules such as canvas.
+RUN apk add --no-cache \
+    build-base \
+    python3 \
+    pkgconf \
+    cairo-dev \
+    pango-dev \
+    jpeg-dev \
+    giflib-dev \
+    librsvg-dev \
+    pixman-dev
 
 # Create app directory
 WORKDIR /app
@@ -9,7 +18,10 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# No dependency install in builder stage (source-only copy stage)
+# Install production dependencies in the builder where native build tools exist.
+# package-lock.json is not currently npm-ci clean, so use npm install to avoid a noisy failed ci fallback.
+RUN npm install --omit=dev --no-audit --no-fund \
+    && npm cache clean --force
 
 # Copy source code
 COPY . .
@@ -17,8 +29,16 @@ COPY . .
 # Production stage
 FROM node:20-alpine AS production
 
-# Install wget for healthcheck
-RUN apk add --no-cache wget
+# Install healthcheck and runtime libraries required by native modules.
+RUN apk add --no-cache \
+    wget \
+    cairo \
+    pango \
+    jpeg \
+    giflib \
+    librsvg \
+    pixman \
+    libstdc++
 
 # Create app directory
 WORKDIR /app
@@ -26,10 +46,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies only.
-# Prefer deterministic install via npm ci, fallback to npm install when lockfile check is stricter in some npm builds.
-RUN (npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund) \
-    && npm cache clean --force
+# Copy production dependencies from builder.
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy app source from builder
 COPY --from=builder /app/bot.js ./
