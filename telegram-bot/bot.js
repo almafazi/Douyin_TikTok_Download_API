@@ -148,6 +148,45 @@ function buildChatAdGateKeyboard(sessionId, { showContinue = false } = {}) {
   return keyboard;
 }
 
+function buildChatAdGateText() {
+  return `📺 *Your download is almost ready!*\n\nWatch a quick ad to unlock your TikTok download.\nOnce it finishes, tap *Continue* to choose your file.`;
+}
+
+async function sendChatAdGateMessage(chatId, processingMessageId, sessionId, payload) {
+  const replyMarkup = {
+    inline_keyboard: buildChatAdGateKeyboard(sessionId, { showContinue: false })
+  };
+  const textOptions = {
+    parse_mode: 'Markdown',
+    disable_web_page_preview: true,
+    reply_markup: replyMarkup
+  };
+  const cover = payload?.cover;
+
+  if (cover) {
+    try {
+      const gateMessage = await bot.sendPhoto(chatId, cover, {
+        caption: buildChatAdGateText(),
+        parse_mode: 'Markdown',
+        reply_markup: replyMarkup
+      });
+      await updateFlowSession(sessionId, { gateMessageId: gateMessage.message_id });
+      await safeDeleteMessage(bot, chatId, processingMessageId);
+      return;
+    } catch (error) {
+      logger.warn(`Failed to send ad gate cover: ${error.message}`);
+    }
+  }
+
+  await safeEditMessage(
+    bot,
+    chatId,
+    processingMessageId,
+    buildChatAdGateText(),
+    textOptions
+  );
+}
+
 async function setMiniAppMenuButton(chatId) {
   if (!canUseTelegramWebAppButton) return;
 
@@ -415,19 +454,7 @@ bot.on('message', async (msg) => {
         createdAt: new Date().toISOString()
       });
 
-      await safeEditMessage(
-        bot,
-        chatId,
-        processingMsg.message_id,
-        `📺 *One more step*\n\nTo continue, watch a short ad first.\nAfter finishing it, the *Continue* button will appear.`,
-        {
-          parse_mode: 'Markdown',
-          disable_web_page_preview: true,
-          reply_markup: {
-            inline_keyboard: buildChatAdGateKeyboard(sessionId, { showContinue: false })
-          }
-        }
-      );
+      await sendChatAdGateMessage(chatId, processingMsg.message_id, sessionId, data);
     } else {
       await safeEditMessage(bot, chatId, processingMsg.message_id, messages.error('Unsupported TikTok content format'));
     }
