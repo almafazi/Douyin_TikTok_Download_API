@@ -27,6 +27,26 @@ function isTikTokUrl(url) {
   return typeof url === 'string' && tiktokRegex.test(url);
 }
 
+function getPhotoDownloadItems(payload) {
+  if (Array.isArray(payload?.photos) && payload.photos.length > 0) {
+    return payload.photos;
+  }
+
+  const noWatermarkLinks = payload?.download_link?.no_watermark;
+  if (Array.isArray(noWatermarkLinks)) {
+    return noWatermarkLinks
+      .map((item) => (typeof item === 'string' ? { url: item } : item))
+      .filter((item) => Boolean(getPhotoDownloadUrl(item)));
+  }
+
+  return [];
+}
+
+function getPhotoDownloadUrl(photo) {
+  if (typeof photo === 'string') return photo;
+  return photo?.url || photo?.download_url || photo?.src || null;
+}
+
 function buildPreview(data) {
   const safeStats = data?.statistics || {};
   const authorName = data?.author?.nickname || 'Unknown';
@@ -44,7 +64,7 @@ function buildPreview(data) {
       comments: safeStats.comment_count || 0,
       shares: safeStats.repost_count || 0
     },
-    photoCount: Array.isArray(data?.photos) ? data.photos.length : 0
+    photoCount: getPhotoDownloadItems(data).length
   };
 }
 
@@ -72,6 +92,8 @@ function buildDownloadOptions(payload) {
   }
 
   if (payload?.status === 'picker') {
+    const photos = getPhotoDownloadItems(payload);
+
     if (payload?.download_slideshow_link) {
       options.push({ id: 'slideshow_video', label: 'Slideshow Video (MP4)', kind: 'slideshow' });
     }
@@ -80,11 +102,9 @@ function buildDownloadOptions(payload) {
       options.push({ id: 'audio_mp3', label: 'Audio MP3', kind: 'audio' });
     }
 
-    if (Array.isArray(payload?.photos)) {
-      payload.photos.forEach((_, index) => {
-        options.push({ id: `photo_${index}`, label: `Photo ${index + 1}`, kind: 'photo' });
-      });
-    }
+    photos.forEach((_, index) => {
+      options.push({ id: `photo_${index}`, label: `Photo ${index + 1}`, kind: 'photo' });
+    });
   }
 
   return options;
@@ -108,8 +128,9 @@ function resolveDownloadUrl(payload, optionId) {
 
     if (optionId.startsWith('photo_')) {
       const photoIndex = parseInt(optionId.replace('photo_', ''), 10);
-      if (Number.isInteger(photoIndex) && photoIndex >= 0 && photoIndex < (payload.photos?.length || 0)) {
-        return payload.photos[photoIndex]?.url || null;
+      const photos = getPhotoDownloadItems(payload);
+      if (Number.isInteger(photoIndex) && photoIndex >= 0 && photoIndex < photos.length) {
+        return getPhotoDownloadUrl(photos[photoIndex]);
       }
     }
   }

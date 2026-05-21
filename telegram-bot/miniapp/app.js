@@ -3,6 +3,7 @@ const state = {
   sessionId: null,
   adWatched: false,
   adPreloaded: false,
+  adPreloadPromise: null,
   chatAutoAdStarted: false
 };
 const THEME_STORAGE_KEY = 'snaptik-miniapp-theme';
@@ -28,6 +29,27 @@ function setStatus(text, isError = false) {
   els.statusText.classList.toggle('error', isError);
 }
 
+function getErrorMessage(error) {
+  if (!error) return 'Something went wrong. Please try again.';
+  if (typeof error === 'string') return error;
+  return error.message || String(error);
+}
+
+function getAdErrorMessage(error) {
+  const message = getErrorMessage(error);
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes('empty feed') || normalized.includes('no fill') || normalized.includes('no ad')) {
+    return 'No ad is available right now. Please tap Retry Ad in a moment.';
+  }
+
+  if (normalized.includes('sdk') || normalized.includes('loading')) {
+    return 'Ad is still loading. Please tap Retry Ad in a few seconds.';
+  }
+
+  return message || 'Failed to show ad. Please retry.';
+}
+
 function setLoading(button, loading, loadingText = 'Processing...') {
   if (!button) return;
   if (loading) {
@@ -41,6 +63,15 @@ function setLoading(button, loading, loadingText = 'Processing...') {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 function isIosDevice() {
@@ -149,15 +180,15 @@ function renderPreview(preview) {
 
   const parts = [];
   if (preview.cover) {
-    parts.push(`<img class="preview-cover" src="${preview.cover}" alt="Cover">`);
+    parts.push(`<img class="preview-cover" src="${escapeHtml(preview.cover)}" alt="Cover">`);
   }
 
   parts.push(`
     <div class="preview-meta">
-      <div><strong>Author:</strong> ${preview.author || '-'}</div>
-      <div><strong>Title:</strong> ${preview.title || '-'}</div>
+      <div><strong>Author:</strong> ${escapeHtml(preview.author || '-')}</div>
+      <div><strong>Title:</strong> ${escapeHtml(preview.title || '-')}</div>
       <div><strong>Type:</strong> ${preview.status === 'picker' ? 'Slideshow/Photo' : 'Video'}</div>
-      <div><strong>Views:</strong> ${preview.stats?.views || 0}</div>
+      <div><strong>Views:</strong> ${escapeHtml(preview.stats?.views || 0)}</div>
     </div>
   `);
 
@@ -166,6 +197,12 @@ function renderPreview(preview) {
 }
 
 function showAdVerification() {
+  els.watchAdBtn.textContent = '▶ Watch Ad';
+  delete els.watchAdBtn.dataset.originalText;
+  const adHint = document.getElementById('adHint');
+  if (adHint) {
+    adHint.textContent = 'After the ad is completed, format options will be unlocked.';
+  }
   els.adSection.classList.remove('hidden');
   els.optionsSection.classList.add('hidden');
 }
@@ -177,6 +214,15 @@ function showDownloadOptions() {
 
 function renderOptions(options) {
   els.optionsList.innerHTML = '';
+
+  if (!Array.isArray(options) || options.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No download format is available for this TikTok link. Please try another link.';
+    els.optionsList.appendChild(empty);
+    showDownloadOptions();
+    return;
+  }
 
   options.forEach((item) => {
     const btn = document.createElement('button');
@@ -200,10 +246,13 @@ async function preloadRewardedAd() {
   if (!state.sessionId || typeof window.show_10653178 !== 'function') return;
 
   try {
-    await window.show_10653178({ type: 'preload', ymid: state.sessionId });
+    state.adPreloadPromise = window.show_10653178({ type: 'preload', ymid: state.sessionId });
+    await state.adPreloadPromise;
     state.adPreloaded = true;
   } catch (error) {
     state.adPreloaded = false;
+  } finally {
+    state.adPreloadPromise = null;
   }
 }
 
@@ -305,6 +354,10 @@ async function handleWatchAd({ auto = false } = {}) {
       throw new Error('Ad SDK is still loading. Please tap Retry ad.');
     }
 
+    if (state.adPreloadPromise) {
+      await state.adPreloadPromise.catch(() => {});
+    }
+
     await watchRewardedAd();
 
     await request('/miniapp/api/reward', {
@@ -323,16 +376,18 @@ async function handleWatchAd({ auto = false } = {}) {
     els.adSection.classList.add('hidden');
     setStatus('Ad verified. Choose a download format below.');
   } catch (error) {
+    const adErrorMessage = getAdErrorMessage(error);
+
     if (state.mode === 'chat') {
       // Fallback: only show retry button when auto-open fails.
       els.adSection.classList.remove('hidden');
       els.watchAdBtn.textContent = '▶ Retry Ad';
       const adHint = document.getElementById('adHint');
       if (adHint) {
-        adHint.textContent = 'Auto-open failed. Tap Retry Ad to continue.';
+        adHint.textContent = adErrorMessage;
       }
     }
-    setStatus(error.message || 'Failed to show ad.', true);
+    setStatus(adErrorMessage, true);
   } finally {
     if (!auto) {
       setLoading(els.watchAdBtn, false);
