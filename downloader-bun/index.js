@@ -29,7 +29,7 @@ const PORT = process.env.PORT || 3021;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3021';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'overflow';
 const DOUYIN_API_URL = process.env.DOUYIN_API_URL || 'http://127.0.0.1:3035/api/hybrid/video_data';
-const TIKTOK_PROVIDER = String(process.env.TIKTOK_PROVIDER || 'hybrid').toLowerCase();
+const TIKTOK_PROVIDER = String(process.env.TIKTOK_PROVIDER || 'library').toLowerCase();
 const ALLOW_PROVIDER_OVERRIDE = String(process.env.ALLOW_PROVIDER_OVERRIDE || 'false').toLowerCase() === 'true';
 const LIBRARY_TIMEOUT_MS = parseInt(process.env.LIBRARY_TIMEOUT_MS || '12000', 10);
 const LIBRARY_FALLBACK_TO_HYBRID = String(process.env.LIBRARY_FALLBACK_TO_HYBRID || 'true').toLowerCase() === 'true';
@@ -76,7 +76,7 @@ function normalizeProvider(provider) {
 }
 
 function resolveProvider(requestMethod) {
-  const configuredProvider = normalizeProvider(TIKTOK_PROVIDER) || 'hybrid';
+  const configuredProvider = normalizeProvider(TIKTOK_PROVIDER) || 'library';
   const requestProvider = normalizeProvider(requestMethod);
 
   if (ALLOW_PROVIDER_OVERRIDE && requestProvider) {

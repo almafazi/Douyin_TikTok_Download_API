@@ -16,6 +16,8 @@ services:
       - CACHE_TTL=3600
       - DOCKER_ENV=true
       - USE_PROXY=true
+      - TIKTOK_PROVIDER=library
+      - LIBRARY_FALLBACK_TO_HYBRID=false
     volumes:
       - ./temp:/app/temp
     networks:
