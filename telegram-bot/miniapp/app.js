@@ -374,7 +374,7 @@ async function handleWatchAd({ auto = false } = {}) {
 
     await loadOptions();
     els.adSection.classList.add('hidden');
-    setStatus('Ad verified. Choose a download format below.');
+    setStatus('Ad verified. Choose a download format above.');
   } catch (error) {
     const adErrorMessage = getAdErrorMessage(error);
 
