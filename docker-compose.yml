@@ -1,21 +1,43 @@
-version: "3.9"  # Docker Compose 文件版本
+version: "3.9"
 
-services:  # 定义服务列表
-  douyin_tiktok_download_api:  # 服务名称
-    build: .  # 使用的 Docker 镜像
-    container_name: douyin_tiktok_download_api  # 容器名称
-    restart: always  # 容器退出后总是重启
+services:
+  douyin_tiktok_download_api:
+    build: .
+    container_name: douyin_tiktok_download_api
+    restart: always
     ports:
-      - "3035:8000"  # Map host port 3035 to container port 8000
-    volumes: # 挂载卷配置
+      - "3035:8000"
+    volumes:
       - ./douyin_tiktok_download_api/douyin_web/config.yaml:/app/crawlers/douyin/web/config.yaml
       - ./douyin_tiktok_download_api/tiktok_web/config.yaml:/app/crawlers/tiktok/web/config.yaml
       - ./douyin_tiktok_download_api/tiktok_app/config.yaml:/app/crawlers/tiktok/app/config.yaml
-    environment:  # 环境变量配置
-      TZ: Asia/Jakarta  # 设置时区为亚洲/上海
-      PUID: 1026  # 设置容器内部的用户 ID
-      PGID: 100  # 设置容器内部的用户组 ID
-    privileged: true  # 设置特权模式以便容器内部可以执行特权操作
+    environment:
+      TZ: Asia/Jakarta
+      PUID: 1026
+      PGID: 100
+    privileged: true
+    networks:
+      - tiktok_shared_network
+
+  tiktok_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: tiktok_gateway
+    restart: always
+    ports:
+      - "8091:8089"
+    volumes:
+      - ./douyin_tiktok_download_api/douyin_web/config.yaml:/app/crawlers/douyin/web/config.yaml:ro
+      - ./douyin_tiktok_download_api/tiktok_web/config.yaml:/app/crawlers/tiktok/web/config.yaml:ro
+      - ./douyin_tiktok_download_api/tiktok_app/config.yaml:/app/crawlers/tiktok/app/config.yaml:ro
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      TZ: Asia/Jakarta
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8089"
+      CONFIG_PATH: /app/config.yaml
+    privileged: true
     networks:
       - tiktok_shared_network
 

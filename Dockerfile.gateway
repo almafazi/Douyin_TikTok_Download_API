@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV SERVER_HOST=0.0.0.0
+ENV SERVER_PORT=8089
+ENV CONFIG_PATH=/app/config.yaml
+
+EXPOSE 8089
+
+ENTRYPOINT ["python", "server/run_server.py"]
