@@ -1,12 +1,10 @@
-version: "3.9"
-
 services:
   redis:
     image: redis:7-alpine
     container_name: tiktok_gateway_redis
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     volumes:
-      - redis-gateway-data:/data
+      - redis-data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -14,25 +12,7 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - tiktok_shared_network
-
-  douyin_tiktok_download_api:
-    build: .
-    container_name: douyin_tiktok_download_api
-    restart: always
-    ports:
-      - "3035:8000"
-    volumes:
-      - ./douyin_tiktok_download_api/douyin_web/config.yaml:/app/crawlers/douyin/web/config.yaml
-      - ./douyin_tiktok_download_api/tiktok_web/config.yaml:/app/crawlers/tiktok/web/config.yaml
-      - ./douyin_tiktok_download_api/tiktok_app/config.yaml:/app/crawlers/tiktok/app/config.yaml
-    environment:
-      TZ: Asia/Jakarta
-      PUID: 1026
-      PGID: 100
-    privileged: true
-    networks:
-      - tiktok_shared_network
+      - tiktok-net
 
   tiktok_gateway:
     build:
@@ -64,15 +44,13 @@ services:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7789/health"]
       interval: 30s
       timeout: 10s
-      start_period: 5s
+      start_period: 10s
       retries: 3
-    privileged: true
     networks:
-      - tiktok_shared_network
+      - tiktok-net
 
 networks:
-  tiktok_shared_network:
-    name: tiktok_shared_network
+  tiktok-net:
 
 volumes:
-  redis-gateway-data:
+  redis-data:
