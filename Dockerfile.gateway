@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -15,9 +15,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 ENV SERVER_HOST=0.0.0.0
-ENV SERVER_PORT=8089
+ENV SERVER_PORT=7789
 ENV CONFIG_PATH=/app/config.yaml
 
-EXPOSE 8089
+EXPOSE 7789
 
-ENTRYPOINT ["python", "server/run_server.py"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:7789/health || exit 1
+
+ENV ENVIRONMENT=production
+
+ENTRYPOINT ["gunicorn", "server.run_server:app", "-c", "gunicorn.gateway.conf.py"]
