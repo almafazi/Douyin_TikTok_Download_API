@@ -1,26 +1,15 @@
 FROM node:20-alpine AS builder
 
-# Install build dependencies for native modules such as canvas.
-RUN apk add --no-cache \
-    build-base \
-    python3 \
-    pkgconf \
-    cairo-dev \
-    pango-dev \
-    jpeg-dev \
-    giflib-dev \
-    librsvg-dev \
-    pixman-dev
-
 # Create app directory
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies in the builder where native build tools exist.
-# package-lock.json is not currently npm-ci clean, so use npm install to avoid a noisy failed ci fallback.
-RUN npm install --omit=dev --no-audit --no-fund \
+# Install exactly the dependency versions recorded in package-lock.json.
+# Using npm ci prevents npm from unexpectedly resolving optional native modules
+# (such as canvas) that are not part of this application.
+RUN npm ci --omit=dev --no-audit --no-fund \
     && npm cache clean --force
 
 # Copy source code
@@ -29,16 +18,8 @@ COPY . .
 # Production stage
 FROM node:20-alpine AS production
 
-# Install healthcheck and runtime libraries required by native modules.
-RUN apk add --no-cache \
-    wget \
-    cairo \
-    pango \
-    jpeg \
-    giflib \
-    librsvg \
-    pixman \
-    libstdc++
+# Install wget for the container health check.
+RUN apk add --no-cache wget
 
 # Create app directory
 WORKDIR /app
