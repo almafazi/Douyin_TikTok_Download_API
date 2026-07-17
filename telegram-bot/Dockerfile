@@ -18,32 +18,28 @@ COPY . .
 # Production stage
 FROM node:20-alpine AS production
 
-# Install wget for the container health check.
-RUN apk add --no-cache wget
+# Install wget for the container health check and create the runtime user.
+RUN apk add --no-cache wget && \
+    addgroup -g 1001 -S nodejs && \
+    adduser -S botuser -u 1001 -G nodejs
 
 # Create app directory
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY --chown=botuser:nodejs package*.json ./
 
 # Copy production dependencies from builder.
-COPY --from=builder /app/node_modules ./node_modules
+COPY --chown=botuser:nodejs --from=builder /app/node_modules ./node_modules
 
 # Copy app source from builder
-COPY --from=builder /app/bot.js ./
-COPY --from=builder /app/server.js ./
-COPY --from=builder /app/healthcheck.js ./
-COPY --from=builder /app/utils ./utils
-COPY --from=builder /app/analytics ./analytics
-COPY --from=builder /app/miniapp ./miniapp
+COPY --chown=botuser:nodejs --from=builder /app/bot.js ./
+COPY --chown=botuser:nodejs --from=builder /app/server.js ./
+COPY --chown=botuser:nodejs --from=builder /app/healthcheck.js ./
+COPY --chown=botuser:nodejs --from=builder /app/utils ./utils
+COPY --chown=botuser:nodejs --from=builder /app/analytics ./analytics
+COPY --chown=botuser:nodejs --from=builder /app/miniapp ./miniapp
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S botuser -u 1001
-
-# Change ownership
-RUN chown -R botuser:nodejs /app
 USER botuser
 
 # Expose ports for health checks, webhooks, and dashboard
