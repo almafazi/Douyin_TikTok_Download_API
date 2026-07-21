@@ -39,7 +39,8 @@ cp .env.example .env
 4. Edit `.env` dan isi:
 ```env
 TELEGRAM_BOT_TOKEN=your_bot_token_here
-API_BASE_URL=http://localhost:6068
+API_KEY=your_snaptik_api_key
+TIKTOK_API_BASES=https://f.snaptik.fit,https://f2.snaptik.fit,https://f3.snaptik.fit
 ```
 
 5. Jalankan bot:
@@ -121,6 +122,7 @@ telegram-bot/
 │   ├── redis.js                # Redis connection
 │   ├── rateLimiter.js          # Rate limiting
 │   ├── axiosConfig.js          # Axios configuration
+│   ├── snaptikApi.js           # TikTok/Douyin API client (snaptik-new pattern)
 │   ├── errorHandler.js         # Error handling
 │   └── keyboard.js             # Bot keyboards
 ├── docker-compose.yml
@@ -135,7 +137,13 @@ telegram-bot/
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | - | Token dari BotFather |
-| `API_BASE_URL` | No | http://localhost:6068 | URL API downloader |
+| `API_KEY` | Yes (TikTok) | - | `X-API-Key` for f*.snaptik.fit (same as snaptik-new) |
+| `TIKTOK_API_BASES` | No | f/f2/f3.snaptik.fit | Comma-separated bases; race first-win |
+| `DOUYIN_API_PRIMARY` | No | https://douyin.snaptik.fit | Douyin primary host |
+| `DOUYIN_API_FALLBACK` | No | https://douyin2.snaptik.fit | Douyin fallback host |
+| `API_TIMEOUT_MS` | No | 15000 | Metadata POST timeout (ms) |
+| `API_TIMEOUT` | No | 120000 | Stream download timeout (ms) |
+| `API_BASE_URL` | No | - | Legacy single host if `TIKTOK_API_BASES` unset |
 | `MAX_FILE_SIZE` | No | 52428800 | Batas ukuran file (bytes) |
 | `LOG_LEVEL` | No | info | Level logging |
 | `MONGO_ROOT_PASSWORD` | Yes* | changeme | Password MongoDB root user |

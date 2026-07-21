@@ -3,13 +3,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import { createLogger } from './utils/logger.js';
-import { createAxiosInstance } from './utils/axiosConfig.js';
 import {
   checkRedisHealth,
   createFlowSession,
   getFlowSession,
   updateFlowSession
 } from './utils/redis.js';
+import {
+  fetchTikTokData,
+  isSupportedMediaUrl,
+  resolveSlideshowUrl,
+  getTikTokApiBases
+} from './utils/snaptikApi.js';
 
 const logger = createLogger('Server');
 const __filename = fileURLToPath(import.meta.url);
@@ -17,15 +22,8 @@ const __dirname = path.dirname(__filename);
 const monetagSdkPath = path.join(__dirname, 'node_modules', 'monetag-tg-sdk', 'index.js');
 const miniAppDir = path.join(__dirname, 'miniapp');
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:6068';
-const API_TIMEOUT = parseInt(process.env.API_TIMEOUT, 10) || 120000;
 const MONETAG_ZONE_ID = process.env.MONETAG_ZONE_ID || '10653178';
-
-const tiktokRegex = /https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)\/[a-zA-Z0-9_\-\/@.?=&]+/;
-
-function isTikTokUrl(url) {
-  return typeof url === 'string' && tiktokRegex.test(url);
-}
+const STREAM_TIMEOUT = parseInt(process.env.API_TIMEOUT || '120000', 10);
 
 function getPhotoDownloadItems(payload) {
   if (Array.isArray(payload?.photos) && payload.photos.length > 0) {
@@ -187,10 +185,6 @@ function setNoCacheHeaders(res) {
  */
 export function createServer(bot, options = {}) {
   const app = express();
-  const apiClient = options.apiClient || createAxiosInstance({
-    baseURL: API_BASE_URL,
-    timeout: API_TIMEOUT
-  });
 
   // Middleware
   app.use(express.json());
@@ -297,29 +291,38 @@ export function createServer(bot, options = {}) {
     });
   });
 
-  // Mini app: prepare TikTok data and create a gated session
+  // Mini app: prepare TikTok/Douyin data and create a gated session
   app.post('/miniapp/api/prepare', async (req, res) => {
     const rawUrl = req.body?.url;
     const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
 
-    if (!isTikTokUrl(url)) {
-      res.status(400).json({ error: 'Invalid TikTok URL' });
+    if (!isSupportedMediaUrl(url)) {
+      res.status(400).json({ error: 'Invalid TikTok or Douyin URL' });
       return;
     }
 
     try {
-      const response = await apiClient.post('/tiktok', { url });
-      const payload = response.data;
+      const { data: payload, apiBase } = await fetchTikTokData(url);
 
       if (!payload || (payload.status !== 'tunnel' && payload.status !== 'picker')) {
         res.status(400).json({ error: 'Unsupported TikTok content format' });
         return;
       }
 
+      // Ensure slideshow link is absolute against winner base
+      if (payload.status === 'picker') {
+        payload.download_slideshow_link = resolveSlideshowUrl(
+          payload.download_slideshow_link,
+          apiBase,
+          getTikTokApiBases()
+        );
+      }
+
       const sessionId = await createFlowSession({
         flow: 'miniapp',
         sourceUrl: url,
         payload,
+        apiBase,
         adWatched: false,
         createdAt: new Date().toISOString()
       });
@@ -331,7 +334,12 @@ export function createServer(bot, options = {}) {
       });
     } catch (error) {
       logger.error('Mini app prepare failed:', error.message);
-      res.status(500).json({ error: 'Failed to process TikTok URL' });
+      const status = error.status && error.status >= 400 && error.status < 600 ? error.status : 500;
+      res.status(status).json({
+        error: error.code === 'API_KEY_MISSING'
+          ? 'Server API key is not configured'
+          : (error.message || 'Failed to process TikTok URL')
+      });
     }
   });
 
@@ -451,7 +459,7 @@ export function createServer(bot, options = {}) {
     try {
       const upstream = await axios.get(targetUrl, {
         responseType: 'stream',
-        timeout: API_TIMEOUT,
+        timeout: STREAM_TIMEOUT,
         maxRedirects: 5
       });
 

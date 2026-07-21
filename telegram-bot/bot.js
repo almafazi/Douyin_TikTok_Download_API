@@ -5,13 +5,20 @@ import { formatDuration, formatNumber, truncateText } from './utils/helpers.js';
 import { messages } from './utils/messages.js';
 import { getUrl, closeRedis, createFlowSession, getFlowSession, updateFlowSession } from './utils/redis.js';
 import { isRateLimited } from './utils/rateLimiter.js';
-import { createAxiosInstance, streamDownload, getFilenameFromHeaders } from './utils/axiosConfig.js';
+import { streamDownload, getFilenameFromHeaders } from './utils/axiosConfig.js';
 import { handleError, safeEditMessage, safeDeleteMessage, ErrorTypes, BotError } from './utils/errorHandler.js';
 import { buildVideoKeyboard, buildSlideshowKeyboard } from './utils/keyboard.js';
 import { createServer, startServer } from './server.js';
 import { connectMongoDB, closeMongoDB } from './analytics/connection.js';
 import { analyticsService } from './analytics/services/analyticsService.js';
 import { createDashboardServer, startDashboardServer } from './analytics/dashboard/server.js';
+import {
+  fetchTikTokData,
+  checkApisHealth,
+  resolveSlideshowUrl,
+  getTikTokApiBases,
+  isSupportedMediaUrl
+} from './utils/snaptikApi.js';
 
 dotenv.config();
 
@@ -33,9 +40,8 @@ process.on('uncaughtException', (error) => {
 
 // Config
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:6068';
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE) || 50 * 1024 * 1024; // 50MB
-const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 120000;
+const STREAM_TIMEOUT = parseInt(process.env.API_TIMEOUT || process.env.STREAM_TIMEOUT || '120000', 10);
 const USE_WEBHOOK = process.env.USE_WEBHOOK === 'true';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 3000;
@@ -44,6 +50,7 @@ const MINIAPP_URL = process.env.MINIAPP_URL || 'https://ma.snaptik.fit/miniapp';
 const MINIAPP_PUBLIC_URL = process.env.MINIAPP_PUBLIC_URL || '';
 const MONETAG_ZONE_ID = process.env.MONETAG_ZONE_ID || '10653178';
 const TELEGRAM_IP_FAMILY = parseInt(process.env.TELEGRAM_IP_FAMILY || '4', 10);
+const MEDIA_URL_REGEX = /https?:\/\/(?:www\.)?(?:(?:vm|vt)\.)?tiktok\.com\/[^\s]+|https?:\/\/(?:www\.)?(?:v\.)?douyin\.com\/[^\s]+/i;
 
 if (!TOKEN) {
   logger.error('TELEGRAM_BOT_TOKEN is required!');
@@ -63,12 +70,6 @@ if (USE_WEBHOOK) {
   bot = new TelegramBot(TOKEN, { polling: true, request: telegramRequestOptions });
   logger.info('Bot initialized in polling mode');
 }
-
-// API Client with retry
-const apiClient = createAxiosInstance({
-  baseURL: API_BASE_URL,
-  timeout: API_TIMEOUT
-});
 
 // ============== VALIDATION HELPERS ==============
 
@@ -334,8 +335,7 @@ bot.onText(/\/stats/, async (msg) => {
   await analyticsService.trackUser(msg);
 
   try {
-    const response = await apiClient.get('/health');
-    const health = response.data;
+    const health = await checkApisHealth();
 
     await analyticsService.trackCommand(userId, 'stats', Date.now() - startTime);
     await bot.sendMessage(chatId, messages.stats(health), {
@@ -402,19 +402,18 @@ bot.on('message', async (msg) => {
   // Skip commands
   if (!text || text.startsWith('/')) return;
 
-  // Check if it's a TikTok URL
-  const tiktokRegex = /https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)\/[a-zA-Z0-9_\-\/@.?=&]+/;
-  const match = text.match(tiktokRegex);
+  // Check if it's a TikTok/Douyin URL
+  const match = text.match(MEDIA_URL_REGEX);
 
-  if (!match) {
+  if (!match || !isSupportedMediaUrl(match[0])) {
     await sendMarkdownMessage(chatId, messages.invalidUrl());
     return;
   }
 
-  const url = match[0];
+  const url = match[0].replace(/[),.;!?]+$/, '');
   const startTime = Date.now();
 
-  logger.info(`Processing TikTok URL from ${chatId}: ${url}`);
+  logger.info(`Processing media URL from ${chatId}: ${url}`);
 
   // Track user and command
   await analyticsService.trackUser(msg);
@@ -423,11 +422,9 @@ bot.on('message', async (msg) => {
   const processingMsg = await sendMarkdownMessage(chatId, messages.processing());
 
   try {
-    // Call API
-    const response = await apiClient.post('/tiktok', { url });
-    const data = response.data;
+    const { data, apiBase } = await fetchTikTokData(url);
 
-    logger.info(`API Response status: ${data.status}`);
+    logger.info(`API Response status: ${data.status} base=${apiBase}`);
 
     if (data.status === 'tunnel' || data.status === 'picker') {
       if (!canUseTelegramUrlButton) {
@@ -436,7 +433,7 @@ bot.on('message', async (msg) => {
         if (data.status === 'tunnel') {
           await handleVideoDownload(chatId, data);
         } else {
-          await handleSlideshowDownload(chatId, data);
+          await handleSlideshowDownload(chatId, data, apiBase);
         }
         return;
       }
@@ -447,6 +444,7 @@ bot.on('message', async (msg) => {
         userId,
         sourceUrl: url,
         payload: data,
+        apiBase,
         adWatched: false,
         optionsShown: false,
         gateMessageId: processingMsg.message_id,
@@ -557,7 +555,7 @@ bot.on('callback_query', async (query) => {
       if (session.payload?.status === 'tunnel') {
         await handleVideoDownload(chatId, session.payload);
       } else if (session.payload?.status === 'picker') {
-        await handleSlideshowDownload(chatId, session.payload);
+        await handleSlideshowDownload(chatId, session.payload, session.apiBase);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Unsupported TikTok content format'));
       }
@@ -583,7 +581,7 @@ bot.on('callback_query', async (query) => {
       const url = await getUrl(id);
 
       if (url) {
-        await handleSlideshowVideoDownload(chatId, url, userId);
+        await handleSlideshowVideoDownload(chatId, url, userId, null);
       } else {
         await sendMarkdownMessage(chatId, messages.error('Link expired, please send URL again'));
       }
@@ -638,21 +636,27 @@ async function handleVideoDownload(chatId, data, originalMsg) {
   });
 }
 
-async function handleSlideshowDownload(chatId, data) {
+async function handleSlideshowDownload(chatId, data, apiBase = null) {
   const { title, description, statistics, author, photos, download_link, download_slideshow_link, cover } = data;
 
   // Build caption
   const caption = messages.slideshowInfo({
     author: author.nickname,
     title: truncateText(title || description, 100),
-    photoCount: photos.length,
-    views: formatNumber(statistics.play_count),
-    likes: formatNumber(statistics.digg_count),
-    comments: formatNumber(statistics.comment_count)
+    photoCount: photos?.length || 0,
+    views: formatNumber(statistics?.play_count),
+    likes: formatNumber(statistics?.digg_count),
+    comments: formatNumber(statistics?.comment_count)
   });
 
+  const slideshowUrl = resolveSlideshowUrl(
+    download_slideshow_link,
+    apiBase,
+    getTikTokApiBases()
+  );
+
   // Build inline keyboard with short IDs
-  const keyboard = await buildSlideshowKeyboard(download_link, download_slideshow_link, photos);
+  const keyboard = await buildSlideshowKeyboard(download_link, slideshowUrl, photos);
 
   // Send info with cover
   await bot.sendPhoto(chatId, cover, {
@@ -679,7 +683,7 @@ async function handleDirectDownload(chatId, type, downloadUrl, userId, contentTy
     const result = await streamDownload({
       method: 'GET',
       url: downloadUrl,
-      timeout: API_TIMEOUT
+      timeout: STREAM_TIMEOUT
     }, MAX_FILE_SIZE);
     stream = result.stream;
     const { headers } = result;
@@ -793,27 +797,32 @@ async function handlePhotoDownload(chatId, photoUrl, userId = null) {
   }
 }
 
-async function handleSlideshowVideoDownload(chatId, encryptedUrl, userId = null) {
+async function handleSlideshowVideoDownload(chatId, encryptedUrl, userId = null, apiBase = null) {
   logger.info(`Slideshow video download requested: chatId=${chatId}`);
 
   // Send queued message - processing will happen in background
   const queuedMsg = await sendMarkdownMessage(chatId, messages.slideshowQueued());
 
   // Process in background (non-blocking)
-  processSlideshowInBackground(chatId, encryptedUrl, queuedMsg.message_id, userId)
+  processSlideshowInBackground(chatId, encryptedUrl, queuedMsg.message_id, userId, apiBase)
     .catch(err => logger.error('Unhandled slideshow background error:', err.message));
 }
 
-async function processSlideshowInBackground(chatId, encryptedUrl, messageId, userId = null) {
+async function processSlideshowInBackground(chatId, encryptedUrl, messageId, userId = null, apiBase = null) {
   let stream;
   const startTime = Date.now();
 
   try {
-    // Build slideshow download URL
-    // encryptedUrl bisa berupa full URL atau token saja
-    const slideshowUrl = encryptedUrl.startsWith('http')
-      ? encryptedUrl
-      : `${API_BASE_URL}/download-slideshow?url=${encodeURIComponent(encryptedUrl)}`;
+    // Build slideshow download URL (full URL preferred; token rebuilt via winner/fallback base)
+    const slideshowUrl = resolveSlideshowUrl(
+      encryptedUrl,
+      apiBase,
+      getTikTokApiBases()
+    );
+
+    if (!slideshowUrl) {
+      throw new Error('Slideshow download URL is unavailable');
+    }
 
     // Download slideshow video with streaming
     // No timeout - let API handle the processing time
@@ -876,9 +885,7 @@ async function processSlideshowInBackground(chatId, encryptedUrl, messageId, use
 
     // Fallback: provide manual download link if API fails
     if (error.response?.status >= 500 || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-      const manualUrl = encryptedUrl.startsWith('http')
-        ? encryptedUrl
-        : `${API_BASE_URL}/download-slideshow?url=${encodeURIComponent(encryptedUrl)}`;
+      const manualUrl = resolveSlideshowUrl(encryptedUrl, apiBase, getTikTokApiBases()) || encryptedUrl;
       await safeEditMessage(
         bot,
         chatId,
@@ -941,7 +948,7 @@ async function startBot() {
     await connectMongoDB();
 
     // Create Express server for bot
-    const app = createServer(bot, { apiClient });
+    const app = createServer(bot);
     const server = await startServer(app, SERVER_PORT);
 
     // Create and start dashboard server

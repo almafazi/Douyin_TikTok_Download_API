@@ -19,7 +19,7 @@ Send a TikTok link to:
 4. Choose your preferred format
 
 *Support:*
-• TikTok video (HD/SD)
+• TikTok / Douyin video (HD/SD)
 • Slideshow/Photo
 • Audio/MP3
 
@@ -35,7 +35,7 @@ Type /help for more details.
 /stats - Check API status
 
 *How to download:*
-1. Open the TikTok app
+1. Open the TikTok or Douyin app
 2. Tap "Share" on a video
 3. Choose "Copy Link"
 4. Paste the link in this chat
@@ -59,7 +59,7 @@ If you have issues, please try again in a few moments.
   processing: () => `
 ⏳ *Processing...*
 
-Fetching TikTok video details...
+Fetching video details...
   `,
 
   readyToDownload: () => `
@@ -151,14 +151,15 @@ ${url}
   invalidUrl: () => `
 ❌ *Invalid link!*
 
-Please make sure you send a valid TikTok link.
+Please make sure you send a valid TikTok or Douyin link.
 
 Examples of valid links:
 • https://tiktok.com/@username/video/123456
 • https://vm.tiktok.com/AbCdEfG
+• https://www.douyin.com/video/123456
 
 How to get the link:
-1. Open a TikTok video
+1. Open a TikTok or Douyin video
 2. Tap the "Share" button
 3. Select "Copy Link"
   `,
@@ -173,20 +174,31 @@ If the problem continues, type /stats to check API status.
 
   stats: (health) => {
     const statusEmoji = health.status === 'ok' ? '✅' : '❌';
-    const primaryEmoji = health.apis?.primary === 'online' ? '🟢' : '🔴';
-    const fallbackEmoji = health.apis?.fallback === 'online' ? '🟢' : '🔴';
+    const hosts = Array.isArray(health.hosts) ? health.hosts : [];
+    const hostLines = hosts.length > 0
+      ? hosts.map((host) => {
+        const emoji = host.status === 'online' ? '🟢' : host.status === 'degraded' ? '🟡' : '🔴';
+        const label = host.kind === 'douyin' ? 'Douyin' : 'TikTok';
+        const latency = typeof host.ms === 'number' ? ` (${host.ms}ms)` : '';
+        return `${emoji} ${label}: ${host.base} — ${host.status}${latency}`;
+      }).join('\n')
+      : 'No hosts configured';
+
+    const keyLine = health.apiKeyConfigured === false
+      ? '\n⚠️ *API key not configured*'
+      : '';
 
     return `
 📊 *API Status*
 
-${statusEmoji} *Status:* ${health.status.toUpperCase()}
-🕐 *Time:* ${health.time}
+${statusEmoji} *Status:* ${(health.status || 'unknown').toUpperCase()}
+🕐 *Time:* ${health.time || '-'}
+${keyLine}
 
-*API Services:*
-${primaryEmoji} Primary API: ${health.apis?.primary || 'unknown'}
-${fallbackEmoji} Fallback API: ${health.apis?.fallback || 'unknown'}
+*API Hosts:*
+${hostLines}
 
-If the API is offline, please try again later.
+If all hosts are offline, please try again later.
     `;
   }
 };
