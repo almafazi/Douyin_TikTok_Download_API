@@ -78,8 +78,41 @@ export function resolveDownloadUrl(value, base) {
 
 export function normalizePayload(response, winnerBase) {
   const dl = response?.download_link || {};
+  const stats = response?.statistics || {};
+
+  const photos = Array.isArray(response?.photos)
+    ? response.photos.map((photo) => {
+      if (!photo || typeof photo === 'string') {
+        const url = typeof photo === 'string' ? photo : null;
+        return url ? { type: 'photo', url } : photo;
+      }
+      return {
+        ...photo,
+        url: resolveDownloadUrl(photo.url || photo.download_url || photo.src, winnerBase),
+        download_link: resolveDownloadUrl(photo.download_link, winnerBase)
+      };
+    })
+    : response?.photos;
+
+  const coverFromPhotos = Array.isArray(photos)
+    ? (photos.find((p) => typeof p?.url === 'string' && p.url.startsWith('http'))?.url || null)
+    : null;
+
+  const cover = (typeof response?.cover === 'string' && response.cover.startsWith('http'))
+    ? response.cover
+    : coverFromPhotos;
+
   return {
     ...response,
+    cover: cover || null,
+    statistics: {
+      repost_count: stats.repost_count ?? stats.share_count ?? 0,
+      share_count: stats.share_count ?? stats.repost_count ?? 0,
+      comment_count: stats.comment_count ?? 0,
+      digg_count: stats.digg_count ?? 0,
+      play_count: stats.play_count ?? 0
+    },
+    photos,
     download_link: {
       ...dl,
       watermark: resolveDownloadUrl(dl.watermark, winnerBase),

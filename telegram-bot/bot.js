@@ -609,39 +609,70 @@ bot.on('callback_query', async (query) => {
 
 // ============== DOWNLOAD HANDLERS ==============
 
+function resolveCoverImage(data) {
+  if (typeof data?.cover === 'string' && data.cover.startsWith('http')) {
+    return data.cover;
+  }
+  const photos = Array.isArray(data?.photos) ? data.photos : [];
+  for (const photo of photos) {
+    const url = typeof photo === 'string' ? photo : photo?.url;
+    if (typeof url === 'string' && url.startsWith('http')) return url;
+  }
+  return null;
+}
+
+async function sendMediaCard(chatId, { cover, caption, keyboard }) {
+  const replyMarkup = { inline_keyboard: keyboard };
+
+  if (cover) {
+    try {
+      await bot.sendPhoto(chatId, cover, {
+        caption,
+        parse_mode: 'Markdown',
+        reply_markup: replyMarkup
+      });
+      return;
+    } catch (error) {
+      logger.warn({ err: error.message, cover: cover.slice(0, 120) }, 'sendPhoto failed, falling back to text');
+    }
+  }
+
+  await bot.sendMessage(chatId, caption, {
+    parse_mode: 'Markdown',
+    disable_web_page_preview: true,
+    reply_markup: replyMarkup
+  });
+}
+
 async function handleVideoDownload(chatId, data, originalMsg) {
-  const { title, description, statistics, author, download_link, cover, duration } = data;
+  const { title, description, statistics, author, download_link, duration } = data;
 
   // Build caption
   const caption = messages.videoInfo({
-    author: author.nickname,
+    author: author?.nickname || 'Unknown',
     title: truncateText(title || description, 100),
     duration: formatDuration(duration),
-    views: formatNumber(statistics.play_count),
-    likes: formatNumber(statistics.digg_count),
-    comments: formatNumber(statistics.comment_count),
-    shares: formatNumber(statistics.repost_count)
+    views: formatNumber(statistics?.play_count),
+    likes: formatNumber(statistics?.digg_count),
+    comments: formatNumber(statistics?.comment_count),
+    shares: formatNumber(statistics?.repost_count ?? statistics?.share_count)
   });
 
   // Build inline keyboard with short IDs
-  const keyboard = await buildVideoKeyboard(download_link);
-
-  // Send info with cover
-  await bot.sendPhoto(chatId, cover, {
+  const keyboard = await buildVideoKeyboard(download_link || {});
+  await sendMediaCard(chatId, {
+    cover: resolveCoverImage(data),
     caption,
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: keyboard
-    }
+    keyboard
   });
 }
 
 async function handleSlideshowDownload(chatId, data, apiBase = null) {
-  const { title, description, statistics, author, photos, download_link, download_slideshow_link, cover } = data;
+  const { title, description, statistics, author, photos, download_link, download_slideshow_link } = data;
 
   // Build caption
   const caption = messages.slideshowInfo({
-    author: author.nickname,
+    author: author?.nickname || 'Unknown',
     title: truncateText(title || description, 100),
     photoCount: photos?.length || 0,
     views: formatNumber(statistics?.play_count),
@@ -656,15 +687,11 @@ async function handleSlideshowDownload(chatId, data, apiBase = null) {
   );
 
   // Build inline keyboard with short IDs
-  const keyboard = await buildSlideshowKeyboard(download_link, slideshowUrl, photos);
-
-  // Send info with cover
-  await bot.sendPhoto(chatId, cover, {
+  const keyboard = await buildSlideshowKeyboard(download_link || {}, slideshowUrl, photos);
+  await sendMediaCard(chatId, {
+    cover: resolveCoverImage(data),
     caption,
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: keyboard
-    }
+    keyboard
   });
 }
 

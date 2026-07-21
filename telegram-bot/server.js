@@ -42,7 +42,20 @@ function getPhotoDownloadItems(payload) {
 
 function getPhotoDownloadUrl(photo) {
   if (typeof photo === 'string') return photo;
-  return photo?.url || photo?.download_url || photo?.src || null;
+  // Prefer API download proxy link when present (stable), else CDN preview url
+  return photo?.download_link || photo?.url || photo?.download_url || photo?.src || null;
+}
+
+function resolvePreviewCover(data) {
+  if (typeof data?.cover === 'string' && data.cover.startsWith('http')) {
+    return data.cover;
+  }
+  const photos = getPhotoDownloadItems(data);
+  for (const photo of photos) {
+    const url = typeof photo === 'string' ? photo : photo?.url;
+    if (typeof url === 'string' && url.startsWith('http')) return url;
+  }
+  return null;
 }
 
 function buildPreview(data) {
@@ -55,12 +68,12 @@ function buildPreview(data) {
     author: authorName,
     title,
     duration: data?.duration || 0,
-    cover: data?.cover || null,
+    cover: resolvePreviewCover(data),
     stats: {
       views: safeStats.play_count || 0,
       likes: safeStats.digg_count || 0,
       comments: safeStats.comment_count || 0,
-      shares: safeStats.repost_count || 0
+      shares: safeStats.repost_count || safeStats.share_count || 0
     },
     photoCount: getPhotoDownloadItems(data).length
   };

@@ -55,7 +55,11 @@ export async function buildSlideshowKeyboard(downloadLinks, slideshowUrl, photos
   if (photos && photos.length > 0) {
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
-      const id = await storeUrl(photo.url);
+      const photoUrl = typeof photo === 'string'
+        ? photo
+        : (photo?.download_link || photo?.url || photo?.download_url || photo?.src);
+      if (!photoUrl) continue;
+      const id = await storeUrl(photoUrl);
       keyboard.push([
         { text: `📷 Download Photo ${i + 1}`, callback_data: `photo:${id}` }
       ]);
