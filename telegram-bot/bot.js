@@ -362,26 +362,47 @@ bot.onText(/\/adminstats/, async (msg) => {
   }
 
   try {
-    const stats = await analyticsService.getStats('24h');
+    const [todayStats, todayByType, yesterdayStats, yesterdayByType] = await Promise.all([
+      analyticsService.getStats('today'),
+      analyticsService.getDownloadsByType('today'),
+      analyticsService.getStats('yesterday'),
+      analyticsService.getDownloadsByType('yesterday')
+    ]);
 
-    const message = `📊 *Analytics Summary (24h)*
+    const formatDate = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-👥 *Total Users:* ${stats.totalUsers}
-🟢 *Active Users:* ${stats.activeUsers}
-⬇️ *Downloads:* ${stats.totalDownloads}
-✅ *Success Rate:* ${stats.successRate}%
-⌨️ *Commands:* ${stats.totalCommands}
-🚨 *Errors:* ${stats.recentErrors}
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
 
-📈 *By Content Type:*`;
+    const formatSection = (title, stats, byType) => {
+      let section = `${title}\n\n` +
+        `👥 *Total Users:* ${stats.totalUsers}\n` +
+        `🟢 *Active Users:* ${stats.activeUsers}\n` +
+        `⬇️ *Downloads:* ${stats.totalDownloads}\n` +
+        `✅ *Success Rate:* ${stats.successRate}%\n` +
+        `⌨️ *Commands:* ${stats.totalCommands}\n` +
+        `🚨 *Errors:* ${stats.recentErrors}\n\n` +
+        `📈 *By Content Type:*`;
 
-    const byType = await analyticsService.getDownloadsByType('24h');
-    let typeMessage = message;
-    byType.forEach(item => {
-      typeMessage += `\n  • ${item._id}: ${item.count}`;
-    });
+      if (byType.length === 0) {
+        section += '\n  • No downloads';
+      } else {
+        byType.forEach(item => {
+          section += `\n  • ${item._id}: ${item.count}`;
+        });
+      }
 
-    await sendMarkdownMessage(chatId, typeMessage);
+      return section;
+    };
+
+    const message = `📊 *Analytics Summary*\n\n` +
+      formatSection(`📅 *Today (${formatDate(today)})*`, todayStats, todayByType) +
+      `\n\n➖➖➖➖➖➖➖➖➖➖\n\n` +
+      formatSection(`📅 *Yesterday (${formatDate(yesterday)})*`, yesterdayStats, yesterdayByType);
+
+    await sendMarkdownMessage(chatId, message);
   } catch (error) {
     logger.error('Admin stats error:', error.message);
     await sendMarkdownMessage(chatId, messages.error('Failed to get analytics data'));

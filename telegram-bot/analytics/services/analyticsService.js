@@ -119,22 +119,15 @@ export class AnalyticsService {
 
   async getStats(period = '24h') {
     try {
-      const now = new Date();
-      let startDate;
+      const { startDate, endDate } = this.getDateRange(period);
 
-      switch (period) {
-        case '24h':
-          startDate = new Date(now - 24 * 60 * 60 * 1000);
-          break;
-        case '7d':
-          startDate = new Date(now - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '30d':
-          startDate = new Date(now - 30 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = new Date(now - 24 * 60 * 60 * 1000);
-      }
+      const timeFilter = endDate
+        ? { timestamp: { $gte: startDate, $lt: endDate } }
+        : { timestamp: { $gte: startDate } };
+
+      const activeUsersFilter = endDate
+        ? { lastActive: { $gte: startDate, $lt: endDate } }
+        : { lastActive: { $gte: startDate } };
 
       const [
         totalUsers,
@@ -145,11 +138,11 @@ export class AnalyticsService {
         recentErrors
       ] = await Promise.all([
         User.countDocuments(),
-        User.countDocuments({ lastActive: { $gte: startDate } }),
-        Download.countDocuments({ timestamp: { $gte: startDate } }),
-        Download.countDocuments({ timestamp: { $gte: startDate }, success: true }),
-        Command.countDocuments({ timestamp: { $gte: startDate } }),
-        ErrorLog.countDocuments({ timestamp: { $gte: startDate } })
+        User.countDocuments(activeUsersFilter),
+        Download.countDocuments(timeFilter),
+        Download.countDocuments({ ...timeFilter, success: true }),
+        Command.countDocuments(timeFilter),
+        ErrorLog.countDocuments(timeFilter)
       ]);
 
       const successRate = totalDownloads > 0 
@@ -176,10 +169,13 @@ export class AnalyticsService {
 
   async getDownloadsByType(period = '24h') {
     try {
-      const startDate = this.getStartDate(period);
-      
+      const { startDate, endDate } = this.getDateRange(period);
+      const timeFilter = endDate
+        ? { timestamp: { $gte: startDate, $lt: endDate } }
+        : { timestamp: { $gte: startDate } };
+
       const results = await Download.aggregate([
-        { $match: { timestamp: { $gte: startDate } } },
+        { $match: timeFilter },
         { $group: { _id: '$contentType', count: { $sum: 1 } } },
         { $sort: { count: -1 } }
       ]);
@@ -272,16 +268,29 @@ export class AnalyticsService {
   }
 
   getStartDate(period) {
+    return this.getDateRange(period).startDate;
+  }
+
+  getDateRange(period) {
     const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
     switch (period) {
-      case '24h':
-        return new Date(now - 24 * 60 * 60 * 1000);
+      case 'today':
+        return { startDate: startOfToday, endDate: null };
+      case 'yesterday': {
+        const startOfYesterday = new Date(startOfToday);
+        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+        return { startDate: startOfYesterday, endDate: startOfToday };
+      }
       case '7d':
-        return new Date(now - 7 * 24 * 60 * 60 * 1000);
+        return { startDate: new Date(now - 7 * 24 * 60 * 60 * 1000), endDate: null };
       case '30d':
-        return new Date(now - 30 * 24 * 60 * 60 * 1000);
+        return { startDate: new Date(now - 30 * 24 * 60 * 60 * 1000), endDate: null };
+      case '24h':
       default:
-        return new Date(now - 24 * 60 * 60 * 1000);
+        return { startDate: new Date(now - 24 * 60 * 60 * 1000), endDate: null };
     }
   }
 }

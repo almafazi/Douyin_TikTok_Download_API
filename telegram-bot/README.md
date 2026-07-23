@@ -55,7 +55,7 @@ npm start
 | `/start` | Memulai bot |
 | `/help` | Panduan penggunaan |
 | `/stats` | Cek status API |
-| `/adminstats` | Analytics summary (admin only) |
+| `/adminstats` | Analytics summary hari ini & kemarin (admin only) |
 
 ## Analytics Dashboard
 
