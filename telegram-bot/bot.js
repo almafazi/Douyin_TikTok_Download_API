@@ -46,6 +46,7 @@ const USE_WEBHOOK = process.env.USE_WEBHOOK === 'true';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 3000;
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID;
+const STATS_TZ_OFFSET_HOURS = parseInt(process.env.STATS_TZ_OFFSET_HOURS || '7', 10);
 const MINIAPP_URL = process.env.MINIAPP_URL || 'https://ma.snaptik.fit/miniapp';
 const MINIAPP_PUBLIC_URL = process.env.MINIAPP_PUBLIC_URL || '';
 const MONETAG_ZONE_ID = process.env.MONETAG_ZONE_ID || '10653178';
@@ -369,16 +370,14 @@ bot.onText(/\/adminstats/, async (msg) => {
       analyticsService.getDownloadsByType('yesterday')
     ]);
 
-    const formatDate = (d) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+    const formatDate = (d) => {
+      const shifted = new Date(d.getTime() + STATS_TZ_OFFSET_HOURS * 60 * 60 * 1000);
+      return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+    };
 
     const formatSection = (title, stats, byType) => {
       let section = `${title}\n\n` +
-        `👥 *Total Users:* ${stats.totalUsers}\n` +
+        `🆕 *New Users:* ${stats.newUsers}\n` +
         `🟢 *Active Users:* ${stats.activeUsers}\n` +
         `⬇️ *Downloads:* ${stats.totalDownloads}\n` +
         `✅ *Success Rate:* ${stats.successRate}%\n` +
@@ -397,10 +396,11 @@ bot.onText(/\/adminstats/, async (msg) => {
       return section;
     };
 
-    const message = `📊 *Analytics Summary*\n\n` +
-      formatSection(`📅 *Today (${formatDate(today)})*`, todayStats, todayByType) +
+    const message = `📊 *Analytics Summary*\n` +
+      `👥 *Total Users:* ${todayStats.totalUsers}\n\n` +
+      formatSection(`📅 *Today (${formatDate(todayStats.startDate)})*`, todayStats, todayByType) +
       `\n\n➖➖➖➖➖➖➖➖➖➖\n\n` +
-      formatSection(`📅 *Yesterday (${formatDate(yesterday)})*`, yesterdayStats, yesterdayByType);
+      formatSection(`📅 *Yesterday (${formatDate(yesterdayStats.startDate)})*`, yesterdayStats, yesterdayByType);
 
     await sendMarkdownMessage(chatId, message);
   } catch (error) {

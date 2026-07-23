@@ -6,6 +6,7 @@ import { createLogger } from '../../utils/logger.js';
 
 const logger = createLogger('Analytics');
 const ANALYTICS_ENABLED = process.env.ANALYTICS_ENABLED !== 'false';
+const TZ_OFFSET_HOURS = parseInt(process.env.STATS_TZ_OFFSET_HOURS || '7', 10);
 
 export class AnalyticsService {
   constructor() {
@@ -129,8 +130,13 @@ export class AnalyticsService {
         ? { lastActive: { $gte: startDate, $lt: endDate } }
         : { lastActive: { $gte: startDate } };
 
+      const newUsersFilter = endDate
+        ? { firstSeen: { $gte: startDate, $lt: endDate } }
+        : { firstSeen: { $gte: startDate } };
+
       const [
         totalUsers,
+        newUsers,
         activeUsers,
         totalDownloads,
         successfulDownloads,
@@ -138,6 +144,7 @@ export class AnalyticsService {
         recentErrors
       ] = await Promise.all([
         User.countDocuments(),
+        User.countDocuments(newUsersFilter),
         User.countDocuments(activeUsersFilter),
         Download.countDocuments(timeFilter),
         Download.countDocuments({ ...timeFilter, success: true }),
@@ -145,13 +152,16 @@ export class AnalyticsService {
         ErrorLog.countDocuments(timeFilter)
       ]);
 
-      const successRate = totalDownloads > 0 
-        ? Math.round((successfulDownloads / totalDownloads) * 100) 
+      const successRate = totalDownloads > 0
+        ? Math.round((successfulDownloads / totalDownloads) * 100)
         : 0;
 
       return {
         period,
+        startDate,
+        endDate,
         totalUsers,
+        newUsers,
         activeUsers,
         totalDownloads,
         successfulDownloads,
@@ -273,15 +283,18 @@ export class AnalyticsService {
 
   getDateRange(period) {
     const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
+    // Day boundaries are computed in this timezone (default: WIB / UTC+7)
+    const offsetMs = TZ_OFFSET_HOURS * 60 * 60 * 1000;
+    const shiftedNow = new Date(now.getTime() + offsetMs);
+    const startOfTodayShifted = new Date(shiftedNow);
+    startOfTodayShifted.setUTCHours(0, 0, 0, 0);
+    const startOfToday = new Date(startOfTodayShifted.getTime() - offsetMs);
 
     switch (period) {
       case 'today':
         return { startDate: startOfToday, endDate: null };
       case 'yesterday': {
-        const startOfYesterday = new Date(startOfToday);
-        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+        const startOfYesterday = new Date(startOfToday.getTime() - 24 * 60 * 60 * 1000);
         return { startDate: startOfYesterday, endDate: startOfToday };
       }
       case '7d':
