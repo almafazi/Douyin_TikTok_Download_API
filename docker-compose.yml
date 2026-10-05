@@ -50,7 +50,11 @@ services:
       - tiktok-net
 
 networks:
+  # Douyin refuses this server over IPv4 (403) and serves it over IPv6 (200),
+  # and containers are IPv4-only by default -- which is why every Douyin request
+  # from here failed. Same one-line fix as the primary backend.
   tiktok-net:
+    enable_ipv6: true
 
 volumes:
   redis-data:
