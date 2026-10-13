@@ -45,7 +45,7 @@ from crawlers.douyin.web.endpoints import DouyinAPIEndpoints
 # 抖音接口数据请求模型
 from crawlers.douyin.web.models import (
     BaseRequestModel, LiveRoomRanking, PostComments,
-    PostCommentsReply, PostDetail,
+    PostCommentsReply,
     UserProfile, UserCollection, UserLike, UserLive,
     UserLive2, UserMix, UserPost
 )
@@ -89,23 +89,15 @@ class DouyinWebCrawler:
     async def fetch_one_video(self, aweme_id: str):
         # 获取抖音的实时Cookie
         kwargs = await self.get_douyin_headers()
+        # Since Sept 2026 Douyin's Argus gateway 403s the a_bogus-signed detail call
+        # ("Uifid Not Found", then "Signature Not Found"), over IPv4 and IPv6 alike.
+        # The same endpoint still answers an unsigned request with the open-platform Origin.
+        headers = {**kwargs["headers"], "Origin": "https://open.douyin.com", "Referer": "https://open.douyin.com/"}
         # 创建一个基础爬虫
-        base_crawler = BaseCrawler(proxies=kwargs["proxies"], crawler_headers=kwargs["headers"])
+        base_crawler = BaseCrawler(proxies=kwargs["proxies"], crawler_headers=headers)
         async with base_crawler as crawler:
-            # 创建一个作品详情的BaseModel参数
-            params = PostDetail(aweme_id=aweme_id)
-            # 生成一个作品详情的带有加密参数的Endpoint
-            # 2024年6月12日22:41:44 由于XBogus加密已经失效，所以不再使用XBogus加密参数，转移至a_bogus加密参数。
-            # endpoint = BogusManager.xb_model_2_endpoint(
-            #     DouyinAPIEndpoints.POST_DETAIL, params.dict(), kwargs["headers"]["User-Agent"]
-            # )
-
-            # 生成一个作品详情的带有a_bogus加密参数的Endpoint
-            params_dict = params.dict()
-            params_dict["msToken"] = ''
-            a_bogus = BogusManager.ab_model_2_endpoint(params_dict, kwargs["headers"]["User-Agent"])
-            endpoint = f"{DouyinAPIEndpoints.POST_DETAIL}?{urlencode(params_dict)}&a_bogus={a_bogus}"
-
+            # aid=6383 also returns image posts (notes)
+            endpoint = f"{DouyinAPIEndpoints.POST_DETAIL}?{urlencode({'aweme_id': aweme_id, 'aid': '6383'})}"
             response = await crawler.fetch_get_json(endpoint)
         return response
 
