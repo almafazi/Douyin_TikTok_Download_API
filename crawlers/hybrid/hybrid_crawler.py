@@ -71,8 +71,13 @@ class HybridCrawler:
         if "douyin" in url:
             platform = "douyin"
             aweme_id = await self.DouyinWebCrawler.get_aweme_id(url)
-            data = await self.DouyinWebCrawler.fetch_one_video(aweme_id)
-            data = data.get("aweme_detail")
+            response = await self.DouyinWebCrawler.fetch_one_video(aweme_id)
+            data = response.get("aweme_detail")
+            if not data:
+                # Private, deleted and filtered posts come back 200 with a null
+                # aweme_detail and the reason in filter_detail.
+                reason = (response.get("filter_detail") or {}).get("filter_reason") or "no aweme_detail"
+                raise ValueError(f"Douyin post not found or unavailable ({reason})")
             # $.aweme_detail.aweme_type
             aweme_type = data.get("aweme_type")
         # 解析TikTok视频/Parse TikTok video

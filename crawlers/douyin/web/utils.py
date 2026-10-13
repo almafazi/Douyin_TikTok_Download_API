@@ -447,7 +447,10 @@ class AwemeIdFetcher:
                     if match:
                         return match.group(1)
 
-                raise APIResponseError("未在响应的地址中找到 aweme_id，检查链接是否为作品页")
+                # A ValueError, not APIResponseError: the link is not a post page,
+                # which is the caller's input, not a failed request.
+                raise ValueError(f"Cannot find aweme_id in {response_url}, not a post link "
+                                 "(未在响应的地址中找到 aweme_id，检查链接是否为作品页)")
 
             except httpx.RequestError as exc:
                 raise APIConnectionError(
